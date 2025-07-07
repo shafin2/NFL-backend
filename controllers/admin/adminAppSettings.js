@@ -20,22 +20,34 @@ const getAppSettings = async (req, res) => {
 
 const updateAppSettings = async (req, res) => {
   try {
-    const updateData = req.body;
+    // Clone request body to avoid unintended side-effects
+    const updateData = { ...req.body };
+
+    // Remove protected fields if they exist on the payload
     delete updateData._id;
     delete updateData.createdAt;
     delete updateData.updatedAt;
 
-    let settings = await AppSettings.findOne();
-    
-    if (!settings) {
-      settings = new AppSettings(updateData);
-    } else {
-      Object.assign(settings, updateData);
-    }
+    /*
+      Use `findOneAndUpdate` with `upsert` to ensure a single settings
+      document is always present. This avoids edge-cases where the initial
+      `findOne` returns null and a second document would violate the unique
+      index we created on the collection.
+      `runValidators` makes sure schema validations are respected, and
+      `new: true` returns the updated version to the client.
+    */
+    const settings = await AppSettings.findOneAndUpdate(
+      {},
+      updateData,
+      {
+        new: true,
+        upsert: true,
+        runValidators: true,
+        setDefaultsOnInsert: true
+      }
+    );
 
-    await settings.save();
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: settings,
       message: 'App settings updated successfully'
@@ -43,7 +55,7 @@ const updateAppSettings = async (req, res) => {
 
   } catch (error) {
     console.error('Error updating app settings:', error);
-    
+
     if (error.name === 'ValidationError') {
       return res.status(400).json({
         success: false,
@@ -52,7 +64,7 @@ const updateAppSettings = async (req, res) => {
       });
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: 'Internal server error',
       message: 'Unable to update app settings'

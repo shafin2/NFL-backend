@@ -1,23 +1,22 @@
 const mongoose = require('mongoose');
+const mongoosePaginate = require('mongoose-paginate-v2');
 
 const newsSchema = new mongoose.Schema({
-  news_id: {
-    type: String,
-    required: true,
-    unique: true,
-    index: true
-  },
   headline: {
     type: String,
     required: true,
     trim: true,
-    maxlength: 200
+    maxlength: 300
   },
   description: {
     type: String,
     required: true,
     trim: true,
     maxlength: 1000
+  },
+  published_at: {
+    type: Date,
+    required: true
   },
   image_url: {
     type: String,
@@ -28,44 +27,35 @@ const newsSchema = new mongoose.Schema({
       message: 'Invalid image URL format'
     }
   },
-  article_link: {
+  image_alt: {
     type: String,
-    required: true,
-    validate: {
-      validator: function(v) {
-        return /^https?:\/\/.+/.test(v);
-      },
-      message: 'Invalid article URL format'
-    }
+    trim: true
   },
-  published_at: {
-    type: Date,
-    required: true,
-    index: true
+  image_caption: {
+    type: String,
+    trim: true
+  },
+  byline: {
+    type: String,
+    trim: true
   },
   source: {
     type: String,
     required: true,
     enum: ['api', 'manual'],
-    default: 'api'
+    default: 'manual'
   },
-  category: {
-    type: String,
-    enum: ['general', 'trade', 'injury', 'game', 'draft', 'playoff'],
-    default: 'general'
+  api_id: {
+    type: String
   },
-  tags: [{
+  type: {
     type: String,
-    trim: true,
-    lowercase: true
-  }],
-  is_featured: {
+    enum: ['Story', 'Video', 'Photo', 'Breaking'],
+    default: 'Story'
+  },
+  is_premium: {
     type: Boolean,
     default: false
-  },
-  view_count: {
-    type: Number,
-    default: 0
   }
 }, {
   timestamps: true,
@@ -76,13 +66,12 @@ const newsSchema = new mongoose.Schema({
 // Indexes for better query performance
 newsSchema.index({ published_at: -1 });
 newsSchema.index({ source: 1, published_at: -1 });
-newsSchema.index({ is_featured: 1, published_at: -1 });
-newsSchema.index({ category: 1, published_at: -1 });
+newsSchema.index({ api_id: 1 }, { sparse: true });
 
 // Virtual for excerpt
 newsSchema.virtual('excerpt').get(function() {
-  return this.description.length > 100 
-    ? this.description.substring(0, 100) + '...'
+  return this.description.length > 150 
+    ? this.description.substring(0, 150) + '...'
     : this.description;
 });
 
@@ -98,5 +87,8 @@ newsSchema.virtual('time_ago').get(function() {
   if (diffHours < 24) return `${diffHours}h ago`;
   return `${diffDays}d ago`;
 });
+
+// Add pagination plugin
+newsSchema.plugin(mongoosePaginate);
 
 module.exports = mongoose.model('News', newsSchema); 

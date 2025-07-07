@@ -7,33 +7,6 @@ const channelSchema = new mongoose.Schema({
     trim: true,
     unique: true,
     maxlength: 100
-  },
-  description: {
-    type: String,
-    trim: true,
-    maxlength: 500
-  },
-  logo_url: {
-    type: String,
-    validate: {
-      validator: function(v) {
-        return !v || /^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|svg)(\?.*)?$/i.test(v);
-      },
-      message: 'Invalid logo URL format'
-    }
-  },
-  is_active: {
-    type: Boolean,
-    default: true
-  },
-  category: {
-    type: String,
-    enum: ['sports', 'entertainment', 'news', 'premium'],
-    default: 'sports'
-  },
-  sort_order: {
-    type: Number,
-    default: 0
   }
 }, {
   timestamps: true,
@@ -41,8 +14,7 @@ const channelSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Index for sorting and filtering
-channelSchema.index({ is_active: 1, sort_order: 1 });
-channelSchema.index({ category: 1, sort_order: 1 });
+// Index for name lookup is already created by unique: true
+// channelSchema.index({ name: 1 }); // Removing duplicate index
 
 module.exports = mongoose.model('Channel', channelSchema); 

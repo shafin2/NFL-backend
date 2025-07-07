@@ -12,10 +12,14 @@ const connectDB = require('./config/database');
 // Import cron jobs
 const { scheduleJobs, stopAllJobs, getJobsStatus } = require('./jobs');
 
+// Import authentication
+const { adminLogin } = require('./middleware/auth');
+
 // Import routes
 const matchRoutes = require('./routes/matchRoutes');
 const newsRoutes = require('./routes/newsRoutes');
 const appSettingsRoutes = require('./routes/appSettingsRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 // Import admin routes
 const adminRoutes = require('./routes/admin');
@@ -56,6 +60,9 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Admin login endpoint
+app.post('/admin/login', adminLogin);
+
 // Cron jobs status endpoint
 app.get('/admin/cron/status', (req, res) => {
   try {
@@ -79,20 +86,25 @@ app.post('/admin/cron/trigger/:jobName', async (req, res) => {
   try {
     const { jobName } = req.params;
     
-    // Import trigger function
+    // Import trigger functions
     const { fetchAndProcessNFLSchedule } = require('./jobs/nflScheduleJob');
     const { fetchAndProcessNFLNews } = require('./jobs/nflNewsJob');
+    const { updateJobStatus, markJobAsRunning } = require('./jobs/index');
     
     let result;
+    let actualJobName;
+    let jobFunction;
     
     switch (jobName.toLowerCase()) {
       case 'schedule':
       case 'nfl-schedule':
-        result = await fetchAndProcessNFLSchedule();
+        actualJobName = 'NFL Schedule Fetch';
+        jobFunction = fetchAndProcessNFLSchedule;
         break;
       case 'news':
       case 'nfl-news':
-        result = await fetchAndProcessNFLNews();
+        actualJobName = 'NFL News Fetch';
+        jobFunction = fetchAndProcessNFLNews;
         break;
       default:
         return res.status(400).json({
@@ -100,6 +112,25 @@ app.post('/admin/cron/trigger/:jobName', async (req, res) => {
           error: 'Invalid job name',
           validJobs: ['schedule', 'news']
         });
+    }
+    
+    // Execute with status tracking
+    try {
+      markJobAsRunning(actualJobName);
+      console.log(`🚀 Manually triggering ${actualJobName}...`);
+      
+      result = await jobFunction();
+      
+      if (result && result.success === false) {
+        updateJobStatus(actualJobName, false, result.error || 'Job completed with errors');
+      } else {
+        updateJobStatus(actualJobName, true);
+      }
+      
+      console.log(`✅ Manual trigger of ${actualJobName} completed`);
+    } catch (jobError) {
+      updateJobStatus(actualJobName, false, jobError.message);
+      throw jobError;
     }
     
     res.status(200).json({
@@ -122,6 +153,7 @@ app.post('/admin/cron/trigger/:jobName', async (req, res) => {
 app.use('/api', matchRoutes);
 app.use('/api', newsRoutes);
 app.use('/api', appSettingsRoutes);
+app.use('/api', notificationRoutes);
 
 // Admin Routes (protected)
 app.use('/admin', adminRoutes);

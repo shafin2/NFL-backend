@@ -1,23 +1,37 @@
 const cron = require('node-cron');
 const News = require('../models/News');
+const JobHistory = require('../models/JobHistory');
 const apiService = require('../services/apiService');
 
 /**
- * Transform RapidAPI news article to our News schema
+ * Transform ESPN/API news article to our News schema
+ * Based on actual API response structure
  */
 const transformArticleToNews = (article) => {
+  // Extract image data from images array
+  let imageUrl = null;
+  let imageAlt = null;
+  let imageCaption = null;
+  
+  if (article.images && Array.isArray(article.images) && article.images.length > 0) {
+    const primaryImage = article.images[0];
+    imageUrl = primaryImage.url;
+    imageAlt = primaryImage.alt || primaryImage.name;
+    imageCaption = primaryImage.caption || primaryImage.credit;
+  }
+
   return {
-    news_id: String(article.id),
     headline: article.headline || 'No Headline',
     description: article.description || 'No description available',
-    image_url: article.images && article.images.length > 0 ? article.images[0].url : null,
-    article_link: article.link || null,
     published_at: article.published ? new Date(article.published) : new Date(),
+    image_url: imageUrl,
+    image_alt: imageAlt,
+    image_caption: imageCaption,
+    byline: article.byline || 'Unknown',
     source: 'api',
-    category: categorizeNews(article.headline, article.description),
-    tags: extractTags(article.headline, article.description),
-    is_featured: false,
-    view_count: 0
+    api_id: String(article.id),
+    type: article.type || 'Story',
+    is_premium: article.premium || false
   };
 };
 
@@ -63,9 +77,40 @@ const extractTags = (headline, description) => {
 };
 
 /**
+ * Debug function to log API response structure (for development)
+ */
+const debugApiResponse = (articles, jobHistory) => {
+  if (articles && articles.length > 0) {
+    const sampleArticle = articles[0];
+    const availableFields = Object.keys(sampleArticle);
+    
+    jobHistory?.addLog('debug', 'Sample article structure analyzed', {
+      availableFields,
+      sampleFields: {
+        id: sampleArticle.id,
+        headline: sampleArticle.headline,
+        published: sampleArticle.published,
+        hasImages: !!sampleArticle.images
+      }
+    });
+    
+    console.log('🔍 Sample article structure:');
+    console.log('Available fields:', availableFields);
+    
+    // Log specific fields we're interested in
+    const fieldsToCheck = ['id', 'headline', 'description', 'published', 'images', 'byline', 'type', 'premium'];
+    fieldsToCheck.forEach(field => {
+      if (sampleArticle.hasOwnProperty(field)) {
+        console.log(`  ${field}:`, typeof sampleArticle[field], sampleArticle[field]);
+      }
+    });
+  }
+};
+
+/**
  * Process and upsert NFL news data
  */
-const processNFLNews = async (newsData) => {
+const processNFLNews = async (newsData, jobHistory) => {
   let totalProcessed = 0;
   let totalUpserted = 0;
   let totalSkipped = 0;
@@ -75,7 +120,14 @@ const processNFLNews = async (newsData) => {
       throw new Error('Invalid news data structure');
     }
 
-    console.log(`📰 Processing ${newsData.articles.length} articles...`);
+    const articleCount = newsData.articles.length;
+    await jobHistory.addLog('info', `Processing ${articleCount} articles...`);
+    console.log(`📰 Processing ${articleCount} articles...`);
+    
+    // Debug the first article structure
+    if (process.env.NODE_ENV !== 'production') {
+      debugApiResponse(newsData.articles, jobHistory);
+    }
 
     for (const article of newsData.articles) {
       totalProcessed++;
@@ -83,81 +135,118 @@ const processNFLNews = async (newsData) => {
       try {
         if (!article.id || !article.headline) {
           totalSkipped++;
+          await jobHistory.addLog('warn', `Skipped article due to missing required fields: ${article.id || 'no-id'}`);
           continue;
         }
 
         const newsData = transformArticleToNews(article);
 
         await News.findOneAndUpdate(
-          { news_id: String(article.id) },
+          { api_id: String(article.id) },
           newsData,
           { upsert: true, new: true, runValidators: true }
         );
 
         totalUpserted++;
-        console.log(`✅ Upserted: ${newsData.headline.substring(0, 50)}...`);
+        if (totalUpserted <= 3) { // Only log first few successes to avoid spam
+          await jobHistory.addLog('info', `Upserted: ${newsData.headline.substring(0, 50)}...`);
+          console.log(`✅ Upserted: ${newsData.headline.substring(0, 50)}...`);
+        }
 
       } catch (error) {
+        await jobHistory.addLog('error', `Error processing article ${article.id}: ${error.message}`);
         console.error(`❌ Error processing article ${article.id}:`, error.message);
       }
     }
 
-    console.log(`📊 Processed: ${totalProcessed}, Upserted: ${totalUpserted}, Skipped: ${totalSkipped}`);
-    return { success: true, processed: totalProcessed, upserted: totalUpserted };
+    const summary = `Processed: ${totalProcessed}, Upserted: ${totalUpserted}, Skipped: ${totalSkipped}`;
+    await jobHistory.addLog('info', summary);
+    console.log(`📊 ${summary}`);
+    
+    return { success: true, processed: totalProcessed, upserted: totalUpserted, skipped: totalSkipped, errors: 0 };
 
   } catch (error) {
+    await jobHistory.addLog('error', `Fatal error in NFL news processing: ${error.message}`);
     console.error('❌ Fatal error in NFL news processing:', error.message);
-    return { success: false, error: error.message };
+    return { success: false, error: error.message, processed: totalProcessed, upserted: totalUpserted, skipped: totalSkipped, errors: 1 };
   }
 };
 
 /**
  * Main function to fetch and process NFL news
  */
-const fetchAndProcessNFLNews = async () => {
-  console.log('\n🚀 Starting NFL News Fetch Job...');
+const fetchAndProcessNFLNews = async (triggeredBy = 'cron', adminUserId = null) => {
+  let jobHistory;
 
   try {
+    jobHistory = await JobHistory.startJob('nfl_news_fetch', triggeredBy === 'cron' ? 'scheduled' : 'manual', triggeredBy, adminUserId);
+    await jobHistory.addLog('info', 'Starting NFL News Fetch Job...');
+    console.log('\n🚀 Starting NFL News Fetch Job...');
+
     if (!process.env.RAPIDAPI_KEY) {
+      const errorMsg = 'RAPIDAPI_KEY not configured';
+      await jobHistory.addLog('error', errorMsg);
+      await jobHistory.complete({ success: false, error: errorMsg, processed: 0, upserted: 0, skipped: 0, errors: 1 });
       console.error('❌ RAPIDAPI_KEY not configured');
-      return;
+      return { success: false, error: errorMsg };
     }
 
-    const newsData = await apiService.fetchNFLNews();
-    if (!newsData) throw new Error('No data received');
+    const startTime = Date.now();
+    let newsData;
+    
+    try {
+      newsData = await apiService.getNFLNews(50);
+      const responseTime = Date.now() - startTime;
+      await jobHistory.addApiCall('rapidapi_nfl_news', 'nfl-news', 200, responseTime, true);
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      await jobHistory.addApiCall('rapidapi_nfl_news', 'nfl-news', error.response?.status || 500, responseTime, false, error.message);
+      throw error;
+    }
 
-    const result = await processNFLNews(newsData);
-    console.log('✅ NFL News Fetch Job finished\n');
+    if (!newsData) {
+      const errorMsg = 'No data received';
+      await jobHistory.addLog('error', errorMsg);
+      await jobHistory.complete({ success: false, error: errorMsg, processed: 0, upserted: 0, skipped: 0, errors: 1 });
+      console.error('❌ No data received');
+      return { success: false, error: errorMsg };
+    }
+
+    const result = await processNFLNews(newsData, jobHistory);
+    await jobHistory.complete(result);
+
+    console.log('✅ NFL News job completed successfully');
     return result;
 
   } catch (error) {
-    console.error(`❌ NFL News Fetch Job failed:`, error.message);
-    return { success: false, error: error.message };
+    const errorMsg = error.message || 'Unknown error';
+    console.error('❌ NFL News job failed:', errorMsg);
+    
+    if (jobHistory) {
+      await jobHistory.addLog('error', `Job failed: ${errorMsg}`);
+      await jobHistory.complete({ success: false, error: errorMsg, processed: 0, upserted: 0, skipped: 0, errors: 1 });
+    }
+    
+    return { success: false, error: errorMsg };
   }
 };
 
 /**
  * Setup cron job for NFL news fetching
- * Runs twice daily: at 00:00 and 12:00
+ * Runs every 6 hours
  */
 const setupNFLNewsJob = () => {
-  const schedule = '0 0,12 * * *'; // Twice daily at midnight and noon
+  const schedule = '0 */6 * * *';
   
-  console.log(`📰 Setting up NFL News cron job: ${schedule}`);
+  console.log('📅 Setting up NFL News cron job...');
+  console.log(`📅 Schedule: ${schedule} (every 6 hours)`);
   
-  const job = cron.schedule(schedule, async () => {
-    await fetchAndProcessNFLNews();
-  }, {
-    scheduled: false, // Don't start immediately
-    timezone: 'America/New_York' // NFL timezone
+  cron.schedule(schedule, async () => {
+    console.log('🔄 NFL News cron job triggered');
+    await fetchAndProcessNFLNews('cron');
   });
-
-  return {
-    job,
-    schedule,
-    name: 'NFL News Fetch',
-    description: 'Fetches NFL news from RapidAPI twice daily'
-  };
+  
+  console.log('✅ NFL News cron job scheduled');
 };
 
 /**
@@ -169,23 +258,19 @@ const cleanupOldNews = async (daysOld = 30) => {
     cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
     const result = await News.deleteMany({
-      published_at: { $lt: cutoffDate },
-      is_featured: false,
-      source: 'api'
+      published_at: { $lt: cutoffDate }
     });
 
-    console.log(`🧹 Cleaned up ${result.deletedCount} old news articles (older than ${daysOld} days)`);
+    console.log(`🗑️ Cleaned up ${result.deletedCount} old news articles`);
     return result.deletedCount;
-
   } catch (error) {
-    console.error('❌ Error cleaning up old news:', error.message);
-    return 0;
+    console.error('❌ Error cleaning up old news:', error);
+    throw error;
   }
 };
 
 module.exports = {
+  fetchAndProcessNFLNews,
   setupNFLNewsJob,
-  fetchAndProcessNFLNews, // Export for manual testing
-  processNFLNews, // Export for testing
-  cleanupOldNews // Export for cleanup operations
+  cleanupOldNews
 }; 

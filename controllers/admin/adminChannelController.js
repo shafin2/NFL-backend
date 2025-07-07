@@ -6,19 +6,19 @@ const getAllChannels = async (req, res) => {
     const {
       page = 1,
       limit = 50,
-      category,
-      is_active
+      search
     } = req.query;
 
     const query = {};
-    if (category) query.category = category;
-    if (is_active !== undefined) query.is_active = is_active === 'true';
+    if (search) {
+      query.name = { $regex: search, $options: 'i' };
+    }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [channels, totalCount] = await Promise.all([
       Channel.find(query)
-        .sort({ sort_order: 1, name: 1 })
+        .sort({ name: 1 })
         .skip(skip)
         .limit(parseInt(limit))
         .lean(),
@@ -56,10 +56,10 @@ const getAllChannels = async (req, res) => {
 // Create new channel
 const createChannel = async (req, res) => {
   try {
-    const channelData = req.body;
+    const { name } = req.body;
 
     // Validate required fields
-    if (!channelData.name) {
+    if (!name || !name.trim()) {
       return res.status(400).json({
         success: false,
         error: 'Missing required field',
@@ -69,7 +69,7 @@ const createChannel = async (req, res) => {
 
     // Check if channel name already exists
     const existingChannel = await Channel.findOne({ 
-      name: { $regex: `^${channelData.name.trim()}$`, $options: 'i' } 
+      name: { $regex: `^${name.trim()}$`, $options: 'i' } 
     });
     
     if (existingChannel) {
@@ -80,7 +80,7 @@ const createChannel = async (req, res) => {
       });
     }
 
-    const newChannel = new Channel(channelData);
+    const newChannel = new Channel({ name: name.trim() });
     await newChannel.save();
 
     res.status(201).json({
@@ -112,32 +112,33 @@ const createChannel = async (req, res) => {
 const updateChannel = async (req, res) => {
   try {
     const { id } = req.params;
-    const updateData = req.body;
+    const { name } = req.body;
 
-    // Remove fields that shouldn't be updated directly
-    delete updateData._id;
-    delete updateData.createdAt;
-    delete updateData.updatedAt;
-
-    // If name is being updated, check for duplicates
-    if (updateData.name) {
-      const existingChannel = await Channel.findOne({
-        _id: { $ne: id },
-        name: { $regex: `^${updateData.name.trim()}$`, $options: 'i' }
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required field',
+        message: 'Channel name is required'
       });
+    }
 
-      if (existingChannel) {
-        return res.status(409).json({
-          success: false,
-          error: 'Duplicate channel name',
-          message: 'A channel with this name already exists'
-        });
-      }
+    // Check for duplicate names
+    const existingChannel = await Channel.findOne({
+      _id: { $ne: id },
+      name: { $regex: `^${name.trim()}$`, $options: 'i' }
+    });
+
+    if (existingChannel) {
+      return res.status(409).json({
+        success: false,
+        error: 'Duplicate channel name',
+        message: 'A channel with this name already exists'
+      });
     }
 
     const channel = await Channel.findByIdAndUpdate(
       id,
-      updateData,
+      { name: name.trim() },
       { new: true, runValidators: true }
     );
 
@@ -179,20 +180,6 @@ const deleteChannel = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Check if channel is assigned to any matches
-    const Match = require('../../models/Match');
-    const matchesUsingChannel = await Match.countDocuments({
-      live_channel_ids: id
-    });
-
-    if (matchesUsingChannel > 0) {
-      return res.status(409).json({
-        success: false,
-        error: 'Channel in use',
-        message: `Cannot delete channel. It is assigned to ${matchesUsingChannel} match(es)`
-      });
-    }
-
     const channel = await Channel.findByIdAndDelete(id);
 
     if (!channel) {
@@ -205,7 +192,7 @@ const deleteChannel = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: { deleted_channel_id: id },
+      data: null,
       message: 'Channel deleted successfully'
     });
 
@@ -224,7 +211,7 @@ const getChannelById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const channel = await Channel.findById(id);
+    const channel = await Channel.findById(id).lean();
 
     if (!channel) {
       return res.status(404).json({
@@ -241,7 +228,7 @@ const getChannelById = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching channel:', error);
+    console.error('Error fetching channel by ID:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',

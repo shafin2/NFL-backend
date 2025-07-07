@@ -9,22 +9,26 @@ const getAllMatches = async (req, res) => {
       limit = 50,
       status,
       season,
-      week
+      week,
+      search
     } = req.query;
 
     const query = {};
     if (status) query.status = status;
     if (season) query['metadata.season'] = season;
     if (week) query['metadata.week'] = week;
+    if (search) {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { home_team: { $regex: search, $options: 'i' } },
+        { away_team: { $regex: search, $options: 'i' } }
+      ];
+    }
 
     const options = {
       page: parseInt(page),
       limit: parseInt(limit),
-      sort: { scheduled_at: -1 },
-      populate: {
-        path: 'live_channel_ids',
-        select: 'name description logo_url'
-      }
+      sort: { scheduled_at: -1 }
     };
 
     const matches = await Match.paginate(query, options);
@@ -54,13 +58,42 @@ const getAllMatches = async (req, res) => {
   }
 };
 
+// Get a single match by ID (admin view)
+const getMatchById = async (req, res) => {
+  try {
+    const match = await Match.findById(req.params.id).lean();
+
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not Found',
+        message: 'The requested match was not found'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: match,
+      message: 'Match retrieved successfully'
+    });
+
+  } catch (error) {
+    console.error('Error fetching match by ID (admin):', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: 'Unable to fetch match'
+    });
+  }
+};
+
 // Create new match
 const createMatch = async (req, res) => {
   try {
     const matchData = req.body;
 
     // Validate required fields
-    const requiredFields = ['game_id', 'title', 'round', 'scheduled_at', 'home_team', 'away_team'];
+    const requiredFields = ['title', 'scheduled_at', 'home_team', 'away_team'];
     const missingFields = requiredFields.filter(field => !matchData[field]);
 
     if (missingFields.length > 0) {
@@ -71,13 +104,22 @@ const createMatch = async (req, res) => {
       });
     }
 
-    // Check if game_id already exists
-    const existingMatch = await Match.findOne({ game_id: matchData.game_id });
-    if (existingMatch) {
-      return res.status(409).json({
+    // Validate m3u8_links based on status
+    const status = matchData.status || 'upcoming';
+    
+    if (status === 'upcoming' && matchData.m3u8_links && matchData.m3u8_links.length > 0) {
+      return res.status(400).json({
         success: false,
-        error: 'Duplicate game_id',
-        message: 'A match with this game_id already exists'
+        error: 'Invalid m3u8 links',
+        message: 'M3U8 links cannot be added for upcoming matches'
+      });
+    }
+
+    if ((status === 'live' || status === 'replay') && (!matchData.m3u8_links || matchData.m3u8_links.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing m3u8 links',
+        message: 'M3U8 links are required for live and replay matches'
       });
     }
 
@@ -87,7 +129,6 @@ const createMatch = async (req, res) => {
     });
 
     await newMatch.save();
-    await newMatch.populate('live_channel_ids', 'name description logo_url');
 
     res.status(201).json({
       success: true,
@@ -125,11 +166,30 @@ const updateMatch = async (req, res) => {
     delete updateData.createdAt;
     delete updateData.updatedAt;
 
+    // Validate m3u8_links based on status
+    const status = updateData.status;
+    
+    if (status === 'upcoming' && updateData.m3u8_links && updateData.m3u8_links.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid m3u8 links',
+        message: 'M3U8 links cannot be added for upcoming matches'
+      });
+    }
+
+    if ((status === 'live' || status === 'replay') && (!updateData.m3u8_links || updateData.m3u8_links.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing m3u8 links',
+        message: 'M3U8 links are required for live and replay matches'
+      });
+    }
+
     const match = await Match.findByIdAndUpdate(
       id,
       updateData,
       { new: true, runValidators: true }
-    ).populate('live_channel_ids', 'name description logo_url');
+    );
 
     if (!match) {
       return res.status(404).json({
@@ -181,7 +241,7 @@ const deleteMatch = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: { deleted_match_id: id },
+      data: null,
       message: 'Match deleted successfully'
     });
 
@@ -195,186 +255,32 @@ const deleteMatch = async (req, res) => {
   }
 };
 
-// Add/Update replay URL
-const updateReplayUrl = async (req, res) => {
+// Get all channels for dropdowns
+const getChannelsForDropdown = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { url } = req.body;
-
-    if (!url) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing URL',
-        message: 'Replay URL is required'
-      });
-    }
-
-    // Validate m3u8 URL format
-    if (!/^https?:\/\/.+\.m3u8(\?.*)?$/i.test(url)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid URL format',
-        message: 'URL must be a valid m3u8 link'
-      });
-    }
-
-    const match = await Match.findById(id);
-    if (!match) {
-      return res.status(404).json({
-        success: false,
-        error: 'Not found',
-        message: 'Match not found'
-      });
-    }
-
-    // Add or update replay link
-    match.m3u8_links = [{ name: 'Replay', url }];
-    match.status = 'replay';
-    
-    await match.save();
-    await match.populate('live_channel_ids', 'name description logo_url');
+    const channels = await Channel.find({}).sort({ name: 1 }).lean();
 
     res.status(200).json({
       success: true,
-      data: match,
-      message: 'Replay URL updated successfully'
+      data: channels,
+      message: 'Channels retrieved successfully'
     });
 
   } catch (error) {
-    console.error('Error updating replay URL:', error);
+    console.error('Error fetching channels for dropdown:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',
-      message: 'Unable to update replay URL'
-    });
-  }
-};
-
-// Add/Update live streaming links
-const updateLiveLinks = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { links } = req.body;
-
-    if (!links || !Array.isArray(links) || links.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid links',
-        message: 'Links array is required and must contain at least one link'
-      });
-    }
-
-    // Validate each link
-    for (const link of links) {
-      if (!link.name || !link.url) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid link format',
-          message: 'Each link must have name and url'
-        });
-      }
-      
-      if (!/^https?:\/\/.+\.m3u8(\?.*)?$/i.test(link.url)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid URL format',
-          message: `Invalid m3u8 URL: ${link.url}`
-        });
-      }
-    }
-
-    const match = await Match.findById(id);
-    if (!match) {
-      return res.status(404).json({
-        success: false,
-        error: 'Not found',
-        message: 'Match not found'
-      });
-    }
-
-    // Update live streaming links
-    match.m3u8_links = links;
-    match.status = 'live';
-    
-    await match.save();
-    await match.populate('live_channel_ids', 'name description logo_url');
-
-    res.status(200).json({
-      success: true,
-      data: match,
-      message: 'Live streaming links updated successfully'
-    });
-
-  } catch (error) {
-    console.error('Error updating live links:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: 'Unable to update live streaming links'
-    });
-  }
-};
-
-// Assign channels to live match
-const assignChannels = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { channel_ids } = req.body;
-
-    if (!channel_ids || !Array.isArray(channel_ids)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid channel IDs',
-        message: 'channel_ids array is required'
-      });
-    }
-
-    // Validate that all channel IDs exist
-    const channels = await Channel.find({ _id: { $in: channel_ids } });
-    if (channels.length !== channel_ids.length) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid channels',
-        message: 'One or more channel IDs are invalid'
-      });
-    }
-
-    const match = await Match.findById(id);
-    if (!match) {
-      return res.status(404).json({
-        success: false,
-        error: 'Not found',
-        message: 'Match not found'
-      });
-    }
-
-    // Assign channels
-    match.live_channel_ids = channel_ids;
-    await match.save();
-    await match.populate('live_channel_ids', 'name description logo_url');
-
-    res.status(200).json({
-      success: true,
-      data: match,
-      message: 'Channels assigned successfully'
-    });
-
-  } catch (error) {
-    console.error('Error assigning channels:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: 'Unable to assign channels'
+      message: 'Unable to fetch channels'
     });
   }
 };
 
 module.exports = {
   getAllMatches,
+  getMatchById,
   createMatch,
   updateMatch,
   deleteMatch,
-  updateReplayUrl,
-  updateLiveLinks,
-  assignChannels
+  getChannelsForDropdown
 }; 

@@ -5,20 +5,20 @@ const getAppSettings = async (req, res) => {
   try {
     const settings = await AppSettings.getCurrentSettings();
 
-    // Format response for mobile app consumption
+    // Format response for mobile app consumption (excluding ads & push config for now)
     const response = {
       app_version: settings.app_version,
       force_update: settings.force_update,
       min_supported_version: settings.min_supported_version,
-      ads: {
-        enable_banner: settings.ads.enable_banner,
-        enable_interstitial: settings.ads.enable_interstitial,
-        banner_frequency: settings.ads.banner_frequency,
-        interstitial_frequency: settings.ads.interstitial_frequency
-      },
       maintenance: {
-        is_active: settings.is_maintenance_active,
-        message: settings.maintenance.message
+        is_active: settings.maintenance.is_enabled,
+        message: settings.maintenance.message,
+        start_time: settings.maintenance.start_time,
+        end_time: settings.maintenance.end_time
+      },
+      ads :{
+        enable_banner: settings.ads.enable_banner,
+        enable_interstitial: settings.ads.enable_interstitial
       },
       features: settings.features,
       api_config: {

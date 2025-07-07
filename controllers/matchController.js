@@ -27,10 +27,6 @@ const getSchedule = async (req, res) => {
       page: parseInt(page),
       limit: parseInt(limit),
       sort: { scheduled_at: 1 }, // Upcoming matches sorted by time
-      populate: {
-        path: 'live_channel_ids',
-        select: 'name description logo_url'
-      }
     };
 
     const matches = await Match.paginate(query, options);
@@ -87,10 +83,6 @@ const getReplays = async (req, res) => {
       page: parseInt(page),
       limit: parseInt(limit),
       sort: { scheduled_at: -1 }, // Recent replays first
-      populate: {
-        path: 'live_channel_ids',
-        select: 'name description logo_url'
-      }
     };
 
     const matches = await Match.paginate(query, options);
@@ -137,10 +129,6 @@ const getLiveMatches = async (req, res) => {
       page: parseInt(page),
       limit: parseInt(limit),
       sort: { scheduled_at: -1 },
-      populate: {
-        path: 'live_channel_ids',
-        select: 'name description logo_url'
-      }
     };
 
     const matches = await Match.paginate(query, options);
@@ -182,8 +170,7 @@ const getMatchById = async (req, res) => {
   try {
     const { id } = req.params;
     
-    const match = await Match.findById(id)
-      .populate('live_channel_ids', 'name description logo_url');
+    const match = await Match.findById(id);
 
     if (!match) {
       return res.status(404).json({

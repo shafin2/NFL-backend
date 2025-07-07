@@ -6,15 +6,15 @@ const getAllNews = async (req, res) => {
     const {
       page = 1,
       limit = 50,
-      category,
       source,
-      is_featured
+      type,
+      is_premium
     } = req.query;
 
     const query = {};
-    if (category) query.category = category;
     if (source) query.source = source;
-    if (is_featured !== undefined) query.is_featured = is_featured === 'true';
+    if (type) query.type = type;
+    if (is_premium !== undefined) query.is_premium = is_premium === 'true';
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
@@ -61,7 +61,7 @@ const createNews = async (req, res) => {
     const newsData = req.body;
 
     // Validate required fields
-    const requiredFields = ['news_id', 'headline', 'description', 'article_link', 'published_at'];
+    const requiredFields = ['headline', 'description', 'published_at'];
     const missingFields = requiredFields.filter(field => !newsData[field]);
 
     if (missingFields.length > 0) {
@@ -69,16 +69,6 @@ const createNews = async (req, res) => {
         success: false,
         error: 'Missing required fields',
         message: `Missing fields: ${missingFields.join(', ')}`
-      });
-    }
-
-    // Check if news_id already exists
-    const existingNews = await News.findOne({ news_id: newsData.news_id });
-    if (existingNews) {
-      return res.status(409).json({
-        success: false,
-        error: 'Duplicate news_id',
-        message: 'A news article with this news_id already exists'
       });
     }
 
@@ -124,23 +114,6 @@ const updateNews = async (req, res) => {
     delete updateData._id;
     delete updateData.createdAt;
     delete updateData.updatedAt;
-    delete updateData.view_count; // Don't allow direct manipulation of view count
-
-    // If news_id is being updated, check for duplicates
-    if (updateData.news_id) {
-      const existingNews = await News.findOne({
-        _id: { $ne: id },
-        news_id: updateData.news_id
-      });
-
-      if (existingNews) {
-        return res.status(409).json({
-          success: false,
-          error: 'Duplicate news_id',
-          message: 'A news article with this news_id already exists'
-        });
-      }
-    }
 
     const news = await News.findByIdAndUpdate(
       id,
@@ -198,7 +171,7 @@ const deleteNews = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: { deleted_news_id: id },
+      data: news,
       message: 'News article deleted successfully'
     });
 
@@ -212,7 +185,7 @@ const deleteNews = async (req, res) => {
   }
 };
 
-// Get news article by ID
+// Get single news article (admin view)
 const getNewsById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -234,7 +207,7 @@ const getNewsById = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching news:', error);
+    console.error('Error fetching news by ID:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',
@@ -243,89 +216,102 @@ const getNewsById = async (req, res) => {
   }
 };
 
-// Toggle featured status
-const toggleFeatured = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const news = await News.findById(id);
-
-    if (!news) {
-      return res.status(404).json({
-        success: false,
-        error: 'Not found',
-        message: 'News article not found'
-      });
-    }
-
-    news.is_featured = !news.is_featured;
-    await news.save();
-
-    res.status(200).json({
-      success: true,
-      data: news,
-      message: `News article ${news.is_featured ? 'featured' : 'unfeatured'} successfully`
-    });
-
-  } catch (error) {
-    console.error('Error toggling featured status:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: 'Unable to toggle featured status'
-    });
-  }
-};
-
-// Bulk update news (for batch operations)
+// Bulk update news articles
 const bulkUpdateNews = async (req, res) => {
   try {
-    const { ids, update_data } = req.body;
+    const { ids, updates } = req.body;
 
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid IDs',
-        message: 'ids array is required and must contain at least one ID'
+        error: 'Invalid request',
+        message: 'IDs array is required and must not be empty'
       });
     }
 
-    if (!update_data || typeof update_data !== 'object') {
+    if (!updates || typeof updates !== 'object') {
       return res.status(400).json({
         success: false,
-        error: 'Invalid update data',
-        message: 'update_data object is required'
+        error: 'Invalid request',
+        message: 'Updates object is required'
       });
     }
 
     // Remove fields that shouldn't be updated directly
-    delete update_data._id;
-    delete update_data.news_id;
-    delete update_data.createdAt;
-    delete update_data.updatedAt;
-    delete update_data.view_count;
+    delete updates._id;
+    delete updates.createdAt;
+    delete updates.updatedAt;
 
     const result = await News.updateMany(
       { _id: { $in: ids } },
-      update_data,
-      { runValidators: true }
+      { $set: updates }
     );
 
     res.status(200).json({
       success: true,
       data: {
-        matched_count: result.matchedCount,
-        modified_count: result.modifiedCount
+        matched: result.matchedCount,
+        modified: result.modifiedCount
       },
-      message: `Bulk update completed. ${result.modifiedCount} articles updated.`
+      message: `${result.modifiedCount} news articles updated successfully`
     });
 
   } catch (error) {
-    console.error('Error in bulk update:', error);
+    console.error('Error bulk updating news:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',
-      message: 'Unable to perform bulk update'
+      message: 'Unable to update news articles'
+    });
+  }
+};
+
+// Get news statistics
+const getNewsStats = async (req, res) => {
+  try {
+    const stats = await News.aggregate([
+      {
+        $group: {
+          _id: null,
+          total_news: { $sum: 1 },
+          api_news: { $sum: { $cond: [{ $eq: ['$source', 'api'] }, 1, 0] } },
+          manual_news: { $sum: { $cond: [{ $eq: ['$source', 'manual'] }, 1, 0] } },
+          premium_news: { $sum: { $cond: [{ $eq: ['$is_premium', true] }, 1, 0] } },
+          latest_news: { $max: '$published_at' }
+        }
+      }
+    ]);
+
+    const typeStats = await News.aggregate([
+      {
+        $group: {
+          _id: '$type',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        general: stats[0] || {
+          total_news: 0,
+          api_news: 0,
+          manual_news: 0,
+          premium_news: 0,
+          latest_news: null
+        },
+        by_type: typeStats
+      },
+      message: 'News statistics retrieved successfully'
+    });
+
+  } catch (error) {
+    console.error('Error fetching news stats:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: 'Unable to fetch news statistics'
     });
   }
 };
@@ -336,6 +322,6 @@ module.exports = {
   updateNews,
   deleteNews,
   getNewsById,
-  toggleFeatured,
-  bulkUpdateNews
+  bulkUpdateNews,
+  getNewsStats
 }; 

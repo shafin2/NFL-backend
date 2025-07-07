@@ -6,16 +6,16 @@ const getNews = async (req, res) => {
     const {
       page = 1,
       limit = 20,
-      category,
-      featured,
+      type,
+      is_premium,
       source
     } = req.query;
 
     const query = {};
     
     // Add filters if provided
-    if (category) query.category = category;
-    if (featured !== undefined) query.is_featured = featured === 'true';
+    if (type) query.type = type;
+    if (is_premium !== undefined) query.is_premium = is_premium === 'true';
     if (source) query.source = source;
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -57,60 +57,60 @@ const getNews = async (req, res) => {
   }
 };
 
-// Get featured news
-const getFeaturedNews = async (req, res) => {
+// Get premium news
+const getPremiumNews = async (req, res) => {
   try {
     const { limit = 5 } = req.query;
 
-    const featuredNews = await News.find({ is_featured: true })
+    const premiumNews = await News.find({ is_premium: true })
       .sort({ published_at: -1 })
       .limit(parseInt(limit))
       .lean();
 
     res.status(200).json({
       success: true,
-      data: featuredNews,
-      message: 'Featured news retrieved successfully'
+      data: premiumNews,
+      message: 'Premium news retrieved successfully'
     });
 
   } catch (error) {
-    console.error('Error fetching featured news:', error);
+    console.error('Error fetching premium news:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',
-      message: 'Unable to fetch featured news'
+      message: 'Unable to fetch premium news'
     });
   }
 };
 
-// Get news by category
-const getNewsByCategory = async (req, res) => {
+// Get news by type
+const getNewsByType = async (req, res) => {
   try {
-    const { category } = req.params;
+    const { type } = req.params;
     const {
       page = 1,
       limit = 20
     } = req.query;
 
-    const validCategories = ['general', 'trade', 'injury', 'game', 'draft', 'playoff'];
+    const validTypes = ['Story', 'Video', 'Photo', 'Breaking'];
     
-    if (!validCategories.includes(category)) {
+    if (!validTypes.includes(type)) {
       return res.status(400).json({
         success: false,
-        error: 'Invalid category',
-        message: `Category must be one of: ${validCategories.join(', ')}`
+        error: 'Invalid type',
+        message: `Type must be one of: ${validTypes.join(', ')}`
       });
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     
     const [news, totalCount] = await Promise.all([
-      News.find({ category })
+      News.find({ type })
         .sort({ published_at: -1 })
         .skip(skip)
         .limit(parseInt(limit))
         .lean(),
-      News.countDocuments({ category })
+      News.countDocuments({ type })
     ]);
 
     const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -118,7 +118,7 @@ const getNewsByCategory = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        category,
+        type,
         news,
         pagination: {
           current_page: parseInt(page),
@@ -129,15 +129,15 @@ const getNewsByCategory = async (req, res) => {
           per_page: parseInt(limit)
         }
       },
-      message: `${category} news retrieved successfully`
+      message: `${type} news retrieved successfully`
     });
 
   } catch (error) {
-    console.error('Error fetching news by category:', error);
+    console.error('Error fetching news by type:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',
-      message: 'Unable to fetch news by category'
+      message: 'Unable to fetch news by type'
     });
   }
 };
@@ -156,10 +156,6 @@ const getNewsById = async (req, res) => {
         message: 'News article not found'
       });
     }
-
-    // Increment view count
-    news.view_count += 1;
-    await news.save();
 
     res.status(200).json({
       success: true,
@@ -199,7 +195,7 @@ const searchNews = async (req, res) => {
       $or: [
         { headline: { $regex: searchRegex } },
         { description: { $regex: searchRegex } },
-        { tags: { $in: [searchRegex] } }
+        { byline: { $regex: searchRegex } }
       ]
     };
 
@@ -224,13 +220,13 @@ const searchNews = async (req, res) => {
         pagination: {
           current_page: parseInt(page),
           total_pages: totalPages,
-          total_results: totalCount,
+          total_news: totalCount,
           has_next: parseInt(page) < totalPages,
           has_prev: parseInt(page) > 1,
           per_page: parseInt(limit)
         }
       },
-      message: 'Search results retrieved successfully'
+      message: 'News search completed successfully'
     });
 
   } catch (error) {
@@ -243,10 +239,61 @@ const searchNews = async (req, res) => {
   }
 };
 
+// Get news statistics
+const getNewsStats = async (req, res) => {
+  try {
+    const stats = await News.aggregate([
+      {
+        $group: {
+          _id: null,
+          total_news: { $sum: 1 },
+          api_news: { $sum: { $cond: [{ $eq: ['$source', 'api'] }, 1, 0] } },
+          manual_news: { $sum: { $cond: [{ $eq: ['$source', 'manual'] }, 1, 0] } },
+          premium_news: { $sum: { $cond: [{ $eq: ['$is_premium', true] }, 1, 0] } },
+          latest_news: { $max: '$published_at' }
+        }
+      }
+    ]);
+
+    const typeStats = await News.aggregate([
+      {
+        $group: {
+          _id: '$type',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        general: stats[0] || {
+          total_news: 0,
+          api_news: 0,
+          manual_news: 0,
+          premium_news: 0,
+          latest_news: null
+        },
+        by_type: typeStats
+      },
+      message: 'News statistics retrieved successfully'
+    });
+
+  } catch (error) {
+    console.error('Error fetching news stats:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: 'Unable to fetch news statistics'
+    });
+  }
+};
+
 module.exports = {
   getNews,
-  getFeaturedNews,
-  getNewsByCategory,
+  getPremiumNews,
+  getNewsByType,
   getNewsById,
-  searchNews
+  searchNews,
+  getNewsStats
 }; 

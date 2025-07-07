@@ -1,32 +1,64 @@
 const cron = require('node-cron');
 const Match = require('../models/Match');
+const JobHistory = require('../models/JobHistory');
 const apiService = require('../services/apiService');
 
 /**
- * Transform Sportradar API game data to our Match schema
+ * Transform SportsBlaze API game data to our Match schema
+ * Based on SportsBlaze API response structure
  */
-const transformGameToMatch = (game, roundName) => {
+const transformGameToMatch = (game) => {
+  // Map SportsBlaze status to our status values
+  let status = 'upcoming';
+  if (game.status === 'Final') {
+    status = 'completed';
+  } else if (game.status === 'In Progress') {
+    status = 'live';
+  } else if (game.status === 'Scheduled') {
+    status = 'upcoming';
+  }
+
+  // Extract scores if available
+  let homeScore = 0;
+  let awayScore = 0;
+  if (game.scores && game.scores.total) {
+    homeScore = game.scores.total.home?.points || 0;
+    awayScore = game.scores.total.away?.points || 0;
+  }
+
+  // Create match title
+  const title = `${game.teams.away.name} @ ${game.teams.home.name}`;
+
+  // Parse venue location (e.g., "New Orleans" -> city)
+  const venueLocation = game.venue?.location || '';
+  const [city, state] = venueLocation.split(', ');
+
   return {
-    game_id: game.id,
-    title: game.title || `${game.away?.name || 'Away'} vs ${game.home?.name || 'Home'}`,
-    round: roundName || 'Regular Season',
-    status: 'upcoming', // Always set to upcoming for scheduled games
-    scheduled_at: new Date(game.scheduled),
-    home_team: game.home?.name || game.home?.alias || 'Unknown Home Team',
-    away_team: game.away?.name || game.away?.alias || 'Unknown Away Team',
+    title: title,
+    round: game.season?.type || 'Regular Season',
+    status: status,
+    scheduled_at: new Date(game.date),
+    home_team: game.teams.home.name,
+    away_team: game.teams.away.name,
     source: 'api',
     metadata: {
-      week: extractWeekFromRound(roundName),
-      season: new Date(game.scheduled).getFullYear(),
-      venue: game.venue?.name || null,
-      weather: null
+      week: game.season?.week || null,
+      season: game.season?.year || new Date(game.date).getFullYear(),
+      venue: {
+        name: game.venue?.name || null,
+        city: city?.trim() || null,
+        state: state?.trim() || null,
+        capacity: null // Not provided by SportsBlaze API
+      },
+      weather: null, // Not provided by SportsBlaze API
+      game_type: game.season?.type?.toLowerCase() || 'regular',
+      coverage: null // Not provided by SportsBlaze API
     },
     score: {
-      home: 0,
-      away: 0
+      home: homeScore,
+      away: awayScore
     },
-    m3u8_links: [],
-    live_channel_ids: []
+    m3u8_links: [] // Not provided by API, admin can add manually
   };
 };
 
@@ -60,82 +92,106 @@ const extractWeekFromRound = (roundName) => {
 };
 
 /**
- * Process and upsert NFL schedule data
+ * Process and upsert NFL schedule data from SportsBlaze API
  */
-const processNFLSchedule = async (scheduleData) => {
+const processNFLSchedule = async (scheduleData, jobHistory) => {
   let totalProcessed = 0;
   let totalUpserted = 0;
   let totalSkipped = 0;
   let errors = [];
 
   try {
-    if (!scheduleData.rounds || !Array.isArray(scheduleData.rounds)) {
-      throw new Error('Invalid schedule data structure: rounds array not found');
+    if (!scheduleData.games || !Array.isArray(scheduleData.games)) {
+      throw new Error('Invalid schedule data structure: games array not found');
     }
 
-    console.log(`📅 Processing ${scheduleData.rounds.length} rounds...`);
+    const gameCount = scheduleData.games.length;
+    await jobHistory.addLog('info', `Processing ${gameCount} games from SportsBlaze API...`);
+    console.log(`📅 Processing ${gameCount} games from SportsBlaze API...`);
 
-    for (const round of scheduleData.rounds) {
-      if (!round.games || !Array.isArray(round.games)) {
-        console.warn(`⚠️ Round "${round.name}" has no games array`);
-        continue;
-      }
+    for (const game of scheduleData.games) {
+      totalProcessed++;
 
-      console.log(`🏈 Processing round: ${round.name} (${round.games.length} games)`);
+      try {
+        // Process all games regardless of status since API provides various statuses
+        // (Scheduled, In Progress, Final, etc.)
 
-      for (const game of round.games) {
-        totalProcessed++;
-
-        try {
-          // Only process scheduled games
-          if (game.status !== 'scheduled') {
-            console.log(`⏭️ Skipping game ${game.id} - status: ${game.status}`);
-            totalSkipped++;
-            continue;
-          }
-
-          // Validate required fields
-          if (!game.id) {
-            console.warn(`⚠️ Game missing ID, skipping:`, game.title);
-            totalSkipped++;
-            continue;
-          }
-
-          if (!game.scheduled) {
-            console.warn(`⚠️ Game ${game.id} missing scheduled time, skipping`);
-            totalSkipped++;
-            continue;
-          }
-
-          // Transform API data to our schema
-          const matchData = transformGameToMatch(game, round.name);
-
-          // Upsert match in database
-          const result = await Match.findOneAndUpdate(
-            { game_id: game.id },
-            matchData,
-            { 
-              upsert: true, 
-              new: true, 
-              runValidators: true,
-              setDefaultsOnInsert: true
-            }
-          );
-
-          if (result) {
-            totalUpserted++;
-            console.log(`✅ Upserted match: ${matchData.title} (${game.id})`);
-          }
-
-        } catch (gameError) {
-          console.error(`❌ Error processing game ${game.id}:`, gameError.message);
-          errors.push({
-            game_id: game.id,
-            error: gameError.message
-          });
+        // Validate required fields
+        if (!game.id) {
+          const warnMsg = `Game missing ID, skipping: ${game.teams?.away?.name} vs ${game.teams?.home?.name}`;
+          await jobHistory.addLog('warn', warnMsg);
+          console.warn(`⚠️ ${warnMsg}`);
+          totalSkipped++;
+          continue;
         }
+
+        if (!game.date) {
+          const warnMsg = `Game ${game.id} missing date, skipping`;
+          await jobHistory.addLog('warn', warnMsg);
+          console.warn(`⚠️ ${warnMsg}`);
+          totalSkipped++;
+          continue;
+        }
+
+        if (!game.teams?.home?.name || !game.teams?.away?.name) {
+          const warnMsg = `Game ${game.id} missing team information, skipping`;
+          await jobHistory.addLog('warn', warnMsg);
+          console.warn(`⚠️ ${warnMsg}`);
+          totalSkipped++;
+          continue;
+        }
+
+        // Transform API data to our schema
+        const matchData = transformGameToMatch(game);
+
+        // For cron job workflow: Only create 'upcoming' matches automatically
+        // Admin can manually create live matches or convert upcoming to replay
+        if (matchData.status === 'completed' || matchData.status === 'live') {
+          const skipMsg = `Skipping ${matchData.status} game: ${matchData.title} - will be handled by admin`;
+          await jobHistory.addLog('info', skipMsg);
+          console.log(`⏭️ ${skipMsg}`);
+          totalSkipped++;
+          continue;
+        }
+
+        // Upsert match in database (only for upcoming games)
+        // Use title and scheduled_at as unique identifier since game_id is removed
+        const result = await Match.findOneAndUpdate(
+          { 
+            title: matchData.title,
+            scheduled_at: matchData.scheduled_at
+          },
+          matchData,
+          { 
+            upsert: true, 
+            new: true, 
+            runValidators: true,
+            setDefaultsOnInsert: true
+          }
+        );
+
+        if (result) {
+          totalUpserted++;
+          if (totalUpserted <= 3) { // Only show first 3 to reduce spam
+            const successMsg = `Upserted match: ${matchData.title} (${game.id}) - Status: ${matchData.status}`;
+            await jobHistory.addLog('info', successMsg);
+            console.log(`✅ ${successMsg}`);
+          }
+        }
+
+      } catch (gameError) {
+        const errorMsg = `Error processing game ${game.id}: ${gameError.message}`;
+        await jobHistory.addLog('error', errorMsg);
+        console.error(`❌ ${errorMsg}`);
+        errors.push({
+          game_id: game.id,
+          error: gameError.message
+        });
       }
     }
+
+    const summary = `Total processed: ${totalProcessed}, Upserted: ${totalUpserted}, Skipped: ${totalSkipped}, Errors: ${errors.length}`;
+    await jobHistory.addLog('info', summary);
 
     console.log(`📊 NFL Schedule Job Summary:`);
     console.log(`   📈 Total processed: ${totalProcessed}`);
@@ -144,6 +200,7 @@ const processNFLSchedule = async (scheduleData) => {
     console.log(`   ❌ Errors: ${errors.length}`);
 
     if (errors.length > 0) {
+      await jobHistory.addLog('warn', `Errors encountered during processing`, { errors });
       console.log('❌ Errors encountered:', errors);
     }
 
@@ -156,6 +213,7 @@ const processNFLSchedule = async (scheduleData) => {
     };
 
   } catch (error) {
+    await jobHistory.addLog('error', `Fatal error in NFL schedule processing: ${error.message}`);
     console.error('❌ Fatal error in NFL schedule processing:', error.message);
     return {
       success: false,
@@ -163,7 +221,7 @@ const processNFLSchedule = async (scheduleData) => {
       processed: totalProcessed,
       upserted: totalUpserted,
       skipped: totalSkipped,
-      errors: errors.length
+      errors: errors.length + 1
     };
   }
 };
@@ -171,71 +229,84 @@ const processNFLSchedule = async (scheduleData) => {
 /**
  * Main function to fetch and process NFL schedule
  */
-const fetchAndProcessNFLSchedule = async () => {
-  const startTime = Date.now();
-  console.log('\n🚀 Starting NFL Schedule Fetch Job...');
+const fetchAndProcessNFLSchedule = async (triggeredBy = 'cron', adminUserId = null, season = null) => {
+  let jobHistory;
 
   try {
-    // Check if API key is configured
-    if (!process.env.SPORTRADAR_API_KEY) {
-      console.error('❌ SPORTRADAR_API_KEY not configured');
-      return;
+    jobHistory = await JobHistory.startJob('nfl_schedule_fetch', triggeredBy === 'cron' ? 'scheduled' : 'manual', triggeredBy, adminUserId);
+    await jobHistory.addLog('info', 'Starting NFL Schedule Fetch Job...');
+    console.log('\n🚀 Starting NFL Schedule Fetch Job...');
+
+    if (!process.env.SPORTSBLAZE_API_KEY) {
+      const errorMsg = 'SPORTSBLAZE_API_KEY not configured';
+      await jobHistory.addLog('error', errorMsg);
+      await jobHistory.complete({ success: false, error: errorMsg, processed: 0, upserted: 0, skipped: 0, errors: 1 });
+      console.error('❌ SPORTSBLAZE_API_KEY not configured');
+      return { success: false, error: errorMsg };
     }
 
-    console.log('🌐 Fetching NFL schedule from Sportradar API...');
-    const scheduleData = await apiService.fetchNFLSchedule();
+    const currentSeason = season || new Date().getFullYear();
+    const startTime = Date.now();
+    let scheduleData;
+    
+    try {
+      scheduleData = await apiService.getNFLSchedule(currentSeason);
+      const responseTime = Date.now() - startTime;
+      await jobHistory.addApiCall('sportsblaze_schedule', 'schedule', 200, responseTime, true);
+    } catch (error) {
+      const responseTime = Date.now() - startTime;
+      await jobHistory.addApiCall('sportsblaze_schedule', 'schedule', error.response?.status || 500, responseTime, false, error.message);
+      throw error;
+    }
 
     if (!scheduleData) {
-      throw new Error('No data received from Sportradar API');
+      const errorMsg = 'No schedule data received from SportsBlaze API';
+      await jobHistory.addLog('error', errorMsg);
+      await jobHistory.complete({ success: false, error: errorMsg, processed: 0, upserted: 0, skipped: 0, errors: 1 });
+      console.error('❌ No schedule data received');
+      return { success: false, error: errorMsg };
     }
 
-    console.log('📅 Processing schedule data...');
-    const result = await processNFLSchedule(scheduleData);
+    const result = await processNFLSchedule(scheduleData, jobHistory);
+    await jobHistory.complete(result);
 
-    const duration = Date.now() - startTime;
-    console.log(`⏱️ NFL Schedule Job completed in ${duration}ms`);
-    console.log('✅ NFL Schedule Fetch Job finished successfully\n');
-
+    console.log('✅ NFL Schedule job completed successfully');
     return result;
 
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error(`❌ NFL Schedule Fetch Job failed after ${duration}ms:`, error.message);
-    console.error('❌ NFL Schedule Fetch Job finished with errors\n');
+    const errorMsg = error.message || 'Unknown error';
+    console.error('❌ NFL Schedule job failed:', errorMsg);
     
-    return {
-      success: false,
-      error: error.message
-    };
+    if (jobHistory) {
+      await jobHistory.addLog('error', `Job failed: ${errorMsg}`);
+      await jobHistory.complete({ success: false, error: errorMsg, processed: 0, upserted: 0, skipped: 0, errors: 1 });
+    }
+    
+    return { success: false, error: errorMsg };
   }
 };
 
 /**
  * Setup cron job for NFL schedule fetching
- * Runs every 6 hours: at 00:00, 06:00, 12:00, 18:00
+ * Runs daily at 2 AM
  */
 const setupNFLScheduleJob = () => {
-  const schedule = '0 */6 * * *'; // Every 6 hours
+  const schedule = '0 2 * * *';
   
-  console.log(`📅 Setting up NFL Schedule cron job with schedule: ${schedule}`);
+  console.log('📅 Setting up NFL Schedule cron job...');
+  console.log(`📅 Schedule: ${schedule} (daily at 2 AM)`);
   
-  const job = cron.schedule(schedule, async () => {
-    await fetchAndProcessNFLSchedule();
-  }, {
-    scheduled: false, // Don't start immediately
-    timezone: 'America/New_York' // NFL timezone
+  cron.schedule(schedule, async () => {
+    console.log('🔄 NFL Schedule cron job triggered');
+    await fetchAndProcessNFLSchedule('cron');
   });
-
-  return {
-    job,
-    schedule,
-    name: 'NFL Schedule Fetch',
-    description: 'Fetches NFL schedule from Sportradar API every 6 hours'
-  };
+  
+  console.log('✅ NFL Schedule cron job scheduled');
 };
 
 module.exports = {
+  fetchAndProcessNFLSchedule,
   setupNFLScheduleJob,
-  fetchAndProcessNFLSchedule, // Export for manual testing
-  processNFLSchedule // Export for testing
+  processNFLSchedule,
+  transformGameToMatch
 }; 

@@ -7,6 +7,8 @@ const adminMatchRoutes = require('./adminMatchRoutes');
 const adminChannelRoutes = require('./adminChannelRoutes');
 const adminNewsRoutes = require('./adminNewsRoutes');
 const adminAppSettingsRoutes = require('./adminAppSettingsRoutes');
+const adminJobHistoryRoutes = require('./adminJobHistoryRoutes');
+const adminNotificationRoutes = require('./adminNotificationRoutes');
 
 // Apply authentication middleware to all admin routes
 router.use(adminAuth);
@@ -17,6 +19,7 @@ router.get('/dashboard', async (req, res) => {
     const Match = require('../../models/Match');
     const News = require('../../models/News');
     const Channel = require('../../models/Channel');
+    const JobHistory = require('../../models/JobHistory');
 
     // Get basic statistics
     const [
@@ -25,18 +28,22 @@ router.get('/dashboard', async (req, res) => {
       replayMatches,
       upcomingMatches,
       totalNews,
-      featuredNews,
       totalChannels,
-      activeChannels
+      totalJobs,
+      runningJobs,
+      recentJobs24h
     ] = await Promise.all([
       Match.countDocuments(),
       Match.countDocuments({ status: 'live' }),
       Match.countDocuments({ status: 'replay' }),
       Match.countDocuments({ status: 'upcoming' }),
       News.countDocuments(),
-      News.countDocuments({ is_featured: true }),
       Channel.countDocuments(),
-      Channel.countDocuments({ is_active: true })
+      JobHistory.countDocuments(),
+      JobHistory.countDocuments({ status: 'running' }),
+      JobHistory.countDocuments({
+        started_at: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+      })
     ]);
 
     res.status(200).json({
@@ -49,12 +56,15 @@ router.get('/dashboard', async (req, res) => {
           upcoming: upcomingMatches
         },
         news: {
-          total: totalNews,
-          featured: featuredNews
+          total: totalNews
         },
         channels: {
-          total: totalChannels,
-          active: activeChannels
+          total: totalChannels
+        },
+        jobs: {
+          total: totalJobs,
+          running: runningJobs,
+          recent_24h: recentJobs24h
         }
       },
       message: 'Dashboard data retrieved successfully'
@@ -75,5 +85,7 @@ router.use('/', adminMatchRoutes);
 router.use('/', adminChannelRoutes);
 router.use('/', adminNewsRoutes);
 router.use('/', adminAppSettingsRoutes);
+router.use('/jobs', adminJobHistoryRoutes);
+router.use('/', adminNotificationRoutes);
 
 module.exports = router; 

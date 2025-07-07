@@ -5,13 +5,18 @@ const {
   createMatch,
   updateMatch,
   deleteMatch,
-  updateReplayUrl,
-  updateLiveLinks,
-  assignChannels
+  getMatchById,
+  getChannelsForDropdown
 } = require('../../controllers/admin/adminMatchController');
 
 // GET /admin/matches - Get all matches
 router.get('/matches', getAllMatches);
+
+// GET /admin/matches/channels/dropdown - Get channels for dropdown
+router.get('/matches/channels/dropdown', getChannelsForDropdown);
+
+// GET /admin/matches/:id - Get single match by ID
+router.get('/matches/:id', getMatchById);
 
 // POST /admin/matches - Create new match
 router.post('/matches', createMatch);
@@ -21,14 +26,5 @@ router.put('/matches/:id', updateMatch);
 
 // DELETE /admin/matches/:id - Delete match
 router.delete('/matches/:id', deleteMatch);
-
-// PUT /admin/matches/:id/replay-url - Add/Update replay URL
-router.put('/matches/:id/replay-url', updateReplayUrl);
-
-// PUT /admin/matches/:id/live-links - Add/Update live streaming links
-router.put('/matches/:id/live-links', updateLiveLinks);
-
-// PUT /admin/matches/:id/assign-channels - Assign channels to live match
-router.put('/matches/:id/assign-channels', assignChannels);
 
 module.exports = router; 
