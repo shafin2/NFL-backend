@@ -1,5 +1,5 @@
 // Consolidated Admin API handler for Vercel serverless function
-const { connectDB } = require('../../config/database');
+const connectDB = require('../../config/database');
 const { adminLogin } = require('../../middleware/auth');
 
 // Import job functions

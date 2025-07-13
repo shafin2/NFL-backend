@@ -1,5 +1,5 @@
 // Consolidated Public API handler for Vercel serverless function
-const { connectDB } = require('../config/database');
+const connectDB = require('../config/database');
 
 // Import all controllers
 const {
