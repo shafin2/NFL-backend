@@ -1,9 +1,6 @@
 // Consolidated Admin API handler for Vercel serverless function
 const connectDB = require('../../config/database');
-const auth = require('../../middleware/auth');
-
-// Import all admin controllers
-// Note: login and getDashboard are handled directly in this file for Vercel
+const { adminAuth, adminLogin } = require('../../middleware/auth');
 
 const {
   getAllNews,
@@ -39,127 +36,24 @@ const {
 const nflScheduleJob = require('../../jobs/nflScheduleJob');
 const nflNewsJob = require('../../jobs/nflNewsJob');
 
-// Import models for dashboard
-const News = require('../../models/News');
-const Match = require('../../models/Match');
-const Channel = require('../../models/Channel');
-const AppSettings = require('../../models/AppSettings');
-
-// Admin login function (Vercel specific)
-const login = async (req, res) => {
-  try {
-    const { token } = req.body;
-
-    if (!token) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing token',
-        message: 'Admin token is required'
-      });
-    }
-
-    // Simple token validation (uses environment variable)
-    const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'your-admin-token-here';
-    
-    if (token !== ADMIN_TOKEN) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid token',
-        message: 'Invalid admin token'
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        token: token,
-        role: 'admin',
-        loginTime: new Date().toISOString()
-      },
-      message: 'Admin login successful'
-    });
-
-  } catch (error) {
-    console.error('Error during admin login:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: 'Unable to process login'
-    });
-  }
-};
-
-// Get admin dashboard data (Vercel specific)
-const getDashboard = async (req, res) => {
-  try {
-    // Get statistics from all collections
-    const [newsStats, matchStats, channelStats, appSettings] = await Promise.all([
-      News.aggregate([
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            premium: { $sum: { $cond: [{ $eq: ['$is_premium', true] }, 1, 0] } },
-            api_news: { $sum: { $cond: [{ $eq: ['$source', 'api'] }, 1, 0] } },
-            manual_news: { $sum: { $cond: [{ $eq: ['$source', 'manual'] }, 1, 0] } },
-            latest: { $max: '$published_at' }
-          }
-        }
-      ]),
-      Match.aggregate([
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            live: { $sum: { $cond: [{ $eq: ['$status', 'live'] }, 1, 0] } },
-            upcoming: { $sum: { $cond: [{ $eq: ['$status', 'upcoming'] }, 1, 0] } },
-            completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
-            latest: { $max: '$scheduled_at' }
-          }
-        }
-      ]),
-      Channel.aggregate([
-        {
-          $group: {
-            _id: null,
-            total: { $sum: 1 },
-            active: { $sum: { $cond: [{ $eq: ['$is_active', true] }, 1, 0] } }
-          }
-        }
-      ]),
-      AppSettings.findOne()
-    ]);
-
-    const dashboard = {
-      news: newsStats[0] || { total: 0, premium: 0, api_news: 0, manual_news: 0, latest: null },
-      matches: matchStats[0] || { total: 0, live: 0, upcoming: 0, completed: 0, latest: null },
-      channels: channelStats[0] || { total: 0, active: 0 },
-      appSettings: {
-        version: appSettings?.app_version || 'Not set',
-        maintenance: appSettings?.maintenance?.is_enabled || false,
-        features: appSettings?.features || {}
-      },
-      systemInfo: {
-        lastUpdated: new Date().toISOString(),
-        serverless: true,
-        platform: 'Vercel'
+// Helper function to parse JSON body in serverless function
+const parseBody = async (req) => {
+  return new Promise((resolve) => {
+    if (req.body && typeof req.body === 'object') {
+      // Body is already parsed
+      resolve(req.body);
+    } else if (req.body && typeof req.body === 'string') {
+      // Body is a string, parse it
+      try {
+        resolve(JSON.parse(req.body));
+      } catch (e) {
+        resolve({});
       }
-    };
-
-    res.status(200).json({
-      success: true,
-      data: dashboard,
-      message: 'Dashboard data retrieved successfully'
-    });
-
-  } catch (error) {
-    console.error('Error fetching dashboard data:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      message: 'Unable to fetch dashboard data'
-    });
-  }
+    } else {
+      // No body
+      resolve({});
+    }
+  });
 };
 
 module.exports = async function handler(req, res) {
@@ -176,6 +70,11 @@ module.exports = async function handler(req, res) {
   try {
     // Connect to database
     await connectDB();
+    
+    // Parse request body for POST requests
+    if (req.method === 'POST' || req.method === 'PUT') {
+      req.body = await parseBody(req);
+    }
     
     const { query, method } = req;
     const { id } = query;
@@ -224,21 +123,78 @@ module.exports = async function handler(req, res) {
       });
     }
     
-    // LOGIN ROUTE (no auth required)
+    // LOGIN ROUTE (no auth required) - Use existing adminLogin function
     if (url === '/login' && method === 'POST') {
       console.log('✅ Admin login route matched');
-      return await login(req, res);
+      return await adminLogin(req, res);
     }
     
     // All other routes require authentication
-    const authResult = await auth(req, res);
+    const authResult = await new Promise((resolve) => {
+      adminAuth(req, res, () => {
+        resolve(true);
+      });
+    }).catch(() => false);
+    
     if (!authResult) {
       return; // Auth middleware will handle the response
     }
     
-    // DASHBOARD ROUTE
+    // Import dashboard route from existing admin routes
     if (url === '/dashboard' || url === '/') {
-      return await getDashboard(req, res);
+      // Use the existing dashboard logic from routes/admin/index.js
+      const Match = require('../../models/Match');
+      const News = require('../../models/News');
+      const Channel = require('../../models/Channel');
+      const JobHistory = require('../../models/JobHistory');
+
+      // Get basic statistics (same as your existing dashboard)
+      const [
+        totalMatches,
+        liveMatches,
+        replayMatches,
+        upcomingMatches,
+        totalNews,
+        premiumNews,
+        breakingNews,
+        totalChannels,
+        activeChannels,
+        recentJobs
+      ] = await Promise.all([
+        Match.countDocuments(),
+        Match.countDocuments({ status: 'live' }),
+        Match.countDocuments({ status: 'replay' }),
+        Match.countDocuments({ status: 'upcoming' }),
+        News.countDocuments(),
+        News.countDocuments({ is_premium: true }),
+        News.countDocuments({ type: 'Breaking' }),
+        Channel.countDocuments(),
+        Channel.countDocuments({ is_active: true }),
+        JobHistory.find().sort({ started_at: -1 }).limit(5)
+      ]);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          matches: {
+            total: totalMatches,
+            live: liveMatches,
+            replay: replayMatches,
+            upcoming: upcomingMatches
+          },
+          news: {
+            total: totalNews,
+            premium: premiumNews,
+            breaking: breakingNews
+          },
+          channels: {
+            total: totalChannels,
+            active: activeChannels
+          },
+          recentJobs: recentJobs
+        },
+        message: 'Dashboard data retrieved successfully'
+      });
     }
     
     // CRON STATUS AND TRIGGERS
