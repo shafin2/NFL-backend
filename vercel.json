@@ -1,36 +1,35 @@
 {
   "version": 2,
-  "name": "nfl-backend",
   "builds": [
     {
       "src": "server.js",
       "use": "@vercel/node"
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "src": "/health",
-      "dest": "/server.js"
+      "source": "/health",
+      "destination": "/server.js"
     },
     {
-      "src": "/admin/login",
-      "dest": "/server.js"
+      "source": "/admin/login",
+      "destination": "/server.js"
     },
     {
-      "src": "/admin/cron/(.*)",
-      "dest": "/server.js"
+      "source": "/admin/cron/(.*)",
+      "destination": "/server.js"
     },
     {
-      "src": "/admin/(.*)",
-      "dest": "/server.js"
+      "source": "/admin/(.*)",
+      "destination": "/server.js"
     },
     {
-      "src": "/api/(.*)",
-      "dest": "/server.js"
+      "source": "/api/(.*)",
+      "destination": "/server.js"
     },
     {
-      "src": "/(.*)",
-      "dest": "/server.js"
+      "source": "/(.*)",
+      "destination": "/server.js"
     }
   ],
   "env": {
@@ -85,16 +84,6 @@
           "value": "X-Requested-With, Content-Type, Accept, Authorization"
         }
       ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/server.js"
-    },
-    {
-      "source": "/admin/(.*)",
-      "destination": "/server.js"
     }
   ]
 } 
