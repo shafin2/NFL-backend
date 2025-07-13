@@ -30,7 +30,7 @@ const {
   getNotificationHistory
 } = require('../controllers/notificationController');
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -48,21 +48,32 @@ export default async function handler(req, res) {
     const { url, query, method } = req;
     const { type, id, week } = query;
     
-    console.log('🔍 Debug - Request URL:', url, 'Method:', method, 'Query:', query);
+    console.log('🔍 Debug - Full Request Object Keys:', Object.keys(req));
+    console.log('🔍 Debug - Request URL:', url);
+    console.log('🔍 Debug - Request Method:', method);
+    console.log('🔍 Debug - Request Query:', query);
+    console.log('🔍 Debug - Request Headers:', req.headers);
     
     // Health check (base route or health)
-    if (url === '/' || url === '' || url === '/health') {
+    if (url === '/' || url === '' || url === '/health' || !url) {
+      console.log('✅ Health check endpoint hit');
       return res.status(200).json({
         status: 'OK',
         message: 'NFL Backend API is running on Vercel',
         timestamp: new Date().toISOString(),
         version: '1.0.0',
-        serverless: true
+        serverless: true,
+        debug: {
+          url: url,
+          method: method,
+          headers: req.headers
+        }
       });
     }
     
     // NEWS ROUTES
     if (url.startsWith('/news')) {
+      console.log('✅ News route matched');
       if (url.includes('/premium')) {
         return await getPremiumNews(req, res);
       } else if (url.includes('/search')) {
@@ -80,6 +91,7 @@ export default async function handler(req, res) {
     
     // MATCH ROUTES
     if (url.startsWith('/matches')) {
+      console.log('✅ Match route matched');
       if (url.includes('/live')) {
         return await getLiveMatches(req, res);
       } else if (url.includes('/upcoming')) {
@@ -95,6 +107,7 @@ export default async function handler(req, res) {
     
     // APP SETTINGS ROUTES
     if (url.startsWith('/app-settings')) {
+      console.log('✅ App settings route matched');
       if (method === 'GET') {
         return await getAppSettings(req, res);
       } else if (method === 'PUT') {
@@ -104,6 +117,7 @@ export default async function handler(req, res) {
     
     // NOTIFICATION ROUTES
     if (url.startsWith('/notifications')) {
+      console.log('✅ Notification route matched');
       if (url.includes('/register')) {
         return await registerDeviceToken(req, res);
       } else if (url.includes('/send')) {
@@ -114,9 +128,21 @@ export default async function handler(req, res) {
     }
     
     // 404 - Route not found
+    console.log('❌ No route matched, returning 404');
     res.status(404).json({
       error: 'Not Found',
-      message: 'The requested endpoint was not found'
+      message: 'The requested endpoint was not found',
+      debug: {
+        url: url,
+        method: method,
+        availableRoutes: [
+          '/ (health check)',
+          '/news',
+          '/matches', 
+          '/app-settings',
+          '/notifications'
+        ]
+      }
     });
     
   } catch (error) {
@@ -127,4 +153,4 @@ export default async function handler(req, res) {
       message: error.message
     });
   }
-} 
+}; 

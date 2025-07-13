@@ -1,16 +1,16 @@
 // Consolidated Admin API handler for Vercel serverless function
 const connectDB = require('../../config/database');
-const { adminLogin } = require('../../middleware/auth');
+const auth = require('../../middleware/auth');
 
-// Import job functions
-const { getJobsStatus } = require('../../jobs');
-const { fetchAndProcessNFLSchedule } = require('../../jobs/nflScheduleJob');
-const { fetchAndProcessNFLNews } = require('../../jobs/nflNewsJob');
-const { updateJobStatus, markJobAsRunning } = require('../../jobs/index');
+// Import all admin controllers
+const {
+  login,
+  getDashboard
+} = require('../../controllers/admin/adminAppSettingsController');
 
-// Import admin controllers
 const {
   getAllNews,
+  getNewsById,
   createNews,
   updateNews,
   deleteNews
@@ -18,26 +18,31 @@ const {
 
 const {
   getAllMatches,
+  getMatchById,
   createMatch,
   updateMatch,
-  deleteMatch,
-  syncMatches
+  deleteMatch
 } = require('../../controllers/admin/adminMatchController');
 
 const {
   getAllChannels,
+  getChannelById,
   createChannel,
   updateChannel,
   deleteChannel
 } = require('../../controllers/admin/adminChannelController');
 
 const {
-  sendBulkNotification,
+  sendNotification,
   getNotificationHistory,
-  deleteNotification
-} = require('../../controllers/admin/adminNotificationController');
+  getNotificationStats
+} = require('../../controllers/notificationController');
 
-export default async function handler(req, res) {
+// Import job functions
+const nflScheduleJob = require('../../jobs/nflScheduleJob');
+const nflNewsJob = require('../../jobs/nflNewsJob');
+
+module.exports = async function handler(req, res) {
   // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -49,131 +54,77 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Connect to database
+    await connectDB();
+    
     const { url, query, method } = req;
     const { id } = query;
     
-    console.log('🔍 Debug - Admin Request URL:', url, 'Method:', method, 'Query:', query);
+    console.log('🔍 Admin Debug - Request URL:', url, 'Method:', method);
     
     // LOGIN ROUTE (no auth required)
-    if (url === '/login' || url === '/') {
-      if (method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-      }
-      await connectDB();
-      return await adminLogin(req, res);
+    if (url === '/login' && method === 'POST') {
+      return await login(req, res);
     }
     
-    // Connect to database for all other routes
-    await connectDB();
+    // All other routes require authentication
+    const authResult = await auth(req, res);
+    if (!authResult) {
+      return; // Auth middleware will handle the response
+    }
     
     // DASHBOARD ROUTE
     if (url === '/dashboard') {
-      if (method !== 'GET') {
-        return res.status(405).json({ error: 'Method not allowed' });
-      }
-      
-      const Match = require('../../models/Match');
-      const News = require('../../models/News');
-      const Channel = require('../../models/Channel');
-      const JobHistory = require('../../models/JobHistory');
-
-      const [
-        totalMatches,
-        liveMatches,
-        replayMatches,
-        upcomingMatches,
-        totalNews,
-        totalChannels,
-        totalJobs,
-        runningJobs,
-        recentJobs24h
-      ] = await Promise.all([
-        Match.countDocuments(),
-        Match.countDocuments({ status: 'live' }),
-        Match.countDocuments({ status: 'replay' }),
-        Match.countDocuments({ status: 'upcoming' }),
-        News.countDocuments(),
-        Channel.countDocuments(),
-        JobHistory.countDocuments(),
-        JobHistory.countDocuments({ status: 'running' }),
-        JobHistory.countDocuments({
-          started_at: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
-        })
-      ]);
-
-      return res.status(200).json({
-        success: true,
-        data: {
-          matches: { total: totalMatches, live: liveMatches, replay: replayMatches, upcoming: upcomingMatches },
-          news: { total: totalNews },
-          channels: { total: totalChannels },
-          jobs: { total: totalJobs, running: runningJobs, recentJobs24h: recentJobs24h }
-        },
-        timestamp: new Date().toISOString()
-      });
+      return await getDashboard(req, res);
     }
     
-    // CRON STATUS ROUTE
+    // CRON STATUS AND TRIGGERS
     if (url === '/cron/status') {
-      if (method !== 'GET') {
-        return res.status(405).json({ error: 'Method not allowed' });
-      }
-      const status = getJobsStatus();
       return res.status(200).json({
         success: true,
-        data: status,
-        timestamp: new Date().toISOString()
+        message: 'Manual job triggers available',
+        availableJobs: ['schedule', 'news'],
+        note: 'Automatic cron jobs disabled for Hobby plan'
       });
     }
     
-    // CRON TRIGGER ROUTES
-    if (url === '/cron/trigger/schedule') {
-      if (method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
+    if (url === '/cron/trigger/schedule' && method === 'POST') {
+      try {
+        await nflScheduleJob();
+        return res.status(200).json({
+          success: true,
+          message: 'NFL schedule job triggered successfully'
+        });
+      } catch (error) {
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to trigger schedule job',
+          message: error.message
+        });
       }
-      
-      const actualJobName = 'NFL Schedule Fetch';
-      await markJobAsRunning(actualJobName);
-      console.log(`🔄 Manual trigger: Starting ${actualJobName}...`);
-      
-      const result = await fetchAndProcessNFLSchedule();
-      await updateJobStatus(actualJobName, true, `Manual trigger successful. ${result.message}`);
-      
-      return res.status(200).json({
-        success: true,
-        message: `${actualJobName} triggered successfully`,
-        jobName: actualJobName,
-        result: result,
-        timestamp: new Date().toISOString(),
-        triggeredBy: 'manual'
-      });
     }
     
-    if (url === '/cron/trigger/news') {
-      if (method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
+    if (url === '/cron/trigger/news' && method === 'POST') {
+      try {
+        await nflNewsJob();
+        return res.status(200).json({
+          success: true,
+          message: 'NFL news job triggered successfully'
+        });
+      } catch (error) {
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to trigger news job',
+          message: error.message
+        });
       }
-      
-      const actualJobName = 'NFL News Fetch';
-      await markJobAsRunning(actualJobName);
-      console.log(`🔄 Manual trigger: Starting ${actualJobName}...`);
-      
-      const result = await fetchAndProcessNFLNews();
-      await updateJobStatus(actualJobName, true, `Manual trigger successful. ${result.message}`);
-      
-      return res.status(200).json({
-        success: true,
-        message: `${actualJobName} triggered successfully`,
-        jobName: actualJobName,
-        result: result,
-        timestamp: new Date().toISOString(),
-        triggeredBy: 'manual'
-      });
     }
     
-    // NEWS MANAGEMENT ROUTES
+    // NEWS ROUTES
     if (url.startsWith('/news')) {
-      if (method === 'GET') {
+      if (method === 'GET' && id) {
+        return await getNewsById(req, res);
+      } else if (method === 'GET') {
         return await getAllNews(req, res);
       } else if (method === 'POST') {
         return await createNews(req, res);
@@ -184,10 +135,10 @@ export default async function handler(req, res) {
       }
     }
     
-    // MATCH MANAGEMENT ROUTES
+    // MATCH ROUTES
     if (url.startsWith('/matches')) {
-      if (url.includes('/sync')) {
-        return await syncMatches(req, res);
+      if (method === 'GET' && id) {
+        return await getMatchById(req, res);
       } else if (method === 'GET') {
         return await getAllMatches(req, res);
       } else if (method === 'POST') {
@@ -199,9 +150,11 @@ export default async function handler(req, res) {
       }
     }
     
-    // CHANNEL MANAGEMENT ROUTES
+    // CHANNEL ROUTES
     if (url.startsWith('/channels')) {
-      if (method === 'GET') {
+      if (method === 'GET' && id) {
+        return await getChannelById(req, res);
+      } else if (method === 'GET') {
         return await getAllChannels(req, res);
       } else if (method === 'POST') {
         return await createChannel(req, res);
@@ -212,14 +165,14 @@ export default async function handler(req, res) {
       }
     }
     
-    // NOTIFICATION MANAGEMENT ROUTES
+    // NOTIFICATION ROUTES
     if (url.startsWith('/notifications')) {
       if (url.includes('/send') && method === 'POST') {
-        return await sendBulkNotification(req, res);
-      } else if (method === 'GET') {
+        return await sendNotification(req, res);
+      } else if (url.includes('/history')) {
         return await getNotificationHistory(req, res);
-      } else if (method === 'DELETE' && id) {
-        return await deleteNotification(req, res);
+      } else if (url.includes('/stats')) {
+        return await getNotificationStats(req, res);
       }
     }
     
@@ -231,21 +184,10 @@ export default async function handler(req, res) {
     
   } catch (error) {
     console.error('Admin API error:', error);
-    
-    // Update job status if it was a cron job error
-    if (req.url.includes('/trigger/')) {
-      try {
-        const jobName = req.url.includes('schedule') ? 'NFL Schedule Fetch' : 'NFL News Fetch';
-        await updateJobStatus(jobName, false, `Manual trigger failed: ${error.message}`);
-      } catch (updateError) {
-        console.error('Failed to update job status:', updateError);
-      }
-    }
-    
     res.status(500).json({
       success: false,
       error: 'Internal server error',
       message: error.message
     });
   }
-} 
+}; 
