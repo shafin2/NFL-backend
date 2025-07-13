@@ -5,6 +5,16 @@
       "maxDuration": 30
     }
   },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/api/admin/(.*)",
+      "destination": "/api/admin"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",

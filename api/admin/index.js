@@ -57,10 +57,17 @@ module.exports = async function handler(req, res) {
     // Connect to database
     await connectDB();
     
-    const { url, query, method } = req;
+    const { query, method } = req;
     const { id } = query;
     
-    console.log('🔍 Admin Debug - Request URL:', url, 'Method:', method);
+    // Extract the path from the URL, removing the /api/admin prefix for routing
+    let url = req.url || '/';
+    if (url.startsWith('/api/admin')) {
+      url = url.substring(10) || '/';
+    }
+    
+    console.log('🔍 Admin Debug - Original URL:', req.url);
+    console.log('🔍 Admin Debug - Processed URL:', url, 'Method:', method);
     
     // LOGIN ROUTE (no auth required)
     if (url === '/login' && method === 'POST') {
@@ -74,7 +81,7 @@ module.exports = async function handler(req, res) {
     }
     
     // DASHBOARD ROUTE
-    if (url === '/dashboard') {
+    if (url === '/dashboard' || url === '/') {
       return await getDashboard(req, res);
     }
     

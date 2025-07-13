@@ -45,11 +45,18 @@ module.exports = async function handler(req, res) {
     // Connect to database
     await connectDB();
     
-    const { url, query, method } = req;
+    const { query, method } = req;
     const { type, id, week } = query;
     
+    // Extract the path from the URL, removing the /api prefix for routing
+    let url = req.url || '/';
+    if (url.startsWith('/api')) {
+      url = url.substring(4) || '/';
+    }
+    
     console.log('🔍 Debug - Full Request Object Keys:', Object.keys(req));
-    console.log('🔍 Debug - Request URL:', url);
+    console.log('🔍 Debug - Original URL:', req.url);
+    console.log('🔍 Debug - Processed URL:', url);
     console.log('🔍 Debug - Request Method:', method);
     console.log('🔍 Debug - Request Query:', query);
     console.log('🔍 Debug - Request Headers:', req.headers);
@@ -63,10 +70,36 @@ module.exports = async function handler(req, res) {
         timestamp: new Date().toISOString(),
         version: '1.0.0',
         serverless: true,
+        endpoints: {
+          public: [
+            '/api (health check)',
+            '/api/news',
+            '/api/news/premium',
+            '/api/news/search',
+            '/api/news/stats',
+            '/api/matches',
+            '/api/matches/live',
+            '/api/matches/upcoming',
+            '/api/app-settings',
+            '/api/notifications',
+            '/api/notifications/register'
+          ],
+          admin: [
+            '/api/admin/login',
+            '/api/admin/dashboard',
+            '/api/admin/news',
+            '/api/admin/matches',
+            '/api/admin/channels',
+            '/api/admin/notifications',
+            '/api/admin/cron/status',
+            '/api/admin/cron/trigger/schedule',
+            '/api/admin/cron/trigger/news'
+          ]
+        },
         debug: {
-          url: url,
-          method: method,
-          headers: req.headers
+          originalUrl: req.url,
+          processedUrl: url,
+          method: method
         }
       });
     }
