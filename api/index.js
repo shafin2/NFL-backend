@@ -48,8 +48,10 @@ export default async function handler(req, res) {
     const { url, query, method } = req;
     const { type, id, week } = query;
     
-    // Health check
-    if (url === '/api' || url === '/api/health') {
+    console.log('🔍 Debug - Request URL:', url, 'Method:', method, 'Query:', query);
+    
+    // Health check (base route or health)
+    if (url === '/' || url === '' || url === '/health') {
       return res.status(200).json({
         status: 'OK',
         message: 'NFL Backend API is running on Vercel',
@@ -60,7 +62,7 @@ export default async function handler(req, res) {
     }
     
     // NEWS ROUTES
-    if (url.startsWith('/api/news')) {
+    if (url.startsWith('/news')) {
       if (url.includes('/premium')) {
         return await getPremiumNews(req, res);
       } else if (url.includes('/search')) {
@@ -77,7 +79,7 @@ export default async function handler(req, res) {
     }
     
     // MATCH ROUTES
-    if (url.startsWith('/api/matches')) {
+    if (url.startsWith('/matches')) {
       if (url.includes('/live')) {
         return await getLiveMatches(req, res);
       } else if (url.includes('/upcoming')) {
@@ -92,7 +94,7 @@ export default async function handler(req, res) {
     }
     
     // APP SETTINGS ROUTES
-    if (url.startsWith('/api/app-settings')) {
+    if (url.startsWith('/app-settings')) {
       if (method === 'GET') {
         return await getAppSettings(req, res);
       } else if (method === 'PUT') {
@@ -101,7 +103,7 @@ export default async function handler(req, res) {
     }
     
     // NOTIFICATION ROUTES
-    if (url.startsWith('/api/notifications')) {
+    if (url.startsWith('/notifications')) {
       if (url.includes('/register')) {
         return await registerDeviceToken(req, res);
       } else if (url.includes('/send')) {

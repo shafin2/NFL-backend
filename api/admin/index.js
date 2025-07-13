@@ -52,8 +52,10 @@ export default async function handler(req, res) {
     const { url, query, method } = req;
     const { id } = query;
     
+    console.log('🔍 Debug - Admin Request URL:', url, 'Method:', method, 'Query:', query);
+    
     // LOGIN ROUTE (no auth required)
-    if (url === '/api/admin/login') {
+    if (url === '/login' || url === '/') {
       if (method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
       }
@@ -65,7 +67,7 @@ export default async function handler(req, res) {
     await connectDB();
     
     // DASHBOARD ROUTE
-    if (url === '/api/admin/dashboard') {
+    if (url === '/dashboard') {
       if (method !== 'GET') {
         return res.status(405).json({ error: 'Method not allowed' });
       }
@@ -112,7 +114,7 @@ export default async function handler(req, res) {
     }
     
     // CRON STATUS ROUTE
-    if (url === '/api/admin/cron/status') {
+    if (url === '/cron/status') {
       if (method !== 'GET') {
         return res.status(405).json({ error: 'Method not allowed' });
       }
@@ -125,7 +127,7 @@ export default async function handler(req, res) {
     }
     
     // CRON TRIGGER ROUTES
-    if (url === '/api/admin/cron/trigger/schedule') {
+    if (url === '/cron/trigger/schedule') {
       if (method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
       }
@@ -147,7 +149,7 @@ export default async function handler(req, res) {
       });
     }
     
-    if (url === '/api/admin/cron/trigger/news') {
+    if (url === '/cron/trigger/news') {
       if (method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' });
       }
@@ -170,7 +172,7 @@ export default async function handler(req, res) {
     }
     
     // NEWS MANAGEMENT ROUTES
-    if (url.startsWith('/api/admin/news')) {
+    if (url.startsWith('/news')) {
       if (method === 'GET') {
         return await getAllNews(req, res);
       } else if (method === 'POST') {
@@ -183,7 +185,7 @@ export default async function handler(req, res) {
     }
     
     // MATCH MANAGEMENT ROUTES
-    if (url.startsWith('/api/admin/matches')) {
+    if (url.startsWith('/matches')) {
       if (url.includes('/sync')) {
         return await syncMatches(req, res);
       } else if (method === 'GET') {
@@ -198,7 +200,7 @@ export default async function handler(req, res) {
     }
     
     // CHANNEL MANAGEMENT ROUTES
-    if (url.startsWith('/api/admin/channels')) {
+    if (url.startsWith('/channels')) {
       if (method === 'GET') {
         return await getAllChannels(req, res);
       } else if (method === 'POST') {
@@ -211,7 +213,7 @@ export default async function handler(req, res) {
     }
     
     // NOTIFICATION MANAGEMENT ROUTES
-    if (url.startsWith('/api/admin/notifications')) {
+    if (url.startsWith('/notifications')) {
       if (url.includes('/send') && method === 'POST') {
         return await sendBulkNotification(req, res);
       } else if (method === 'GET') {
