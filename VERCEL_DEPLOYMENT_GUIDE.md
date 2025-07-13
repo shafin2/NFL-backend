@@ -54,19 +54,13 @@ Each function uses URL parsing and query parameters to determine which controlle
 
 ## ⚡ Vercel Features Enabled
 
-### **✅ Automatic Cron Jobs:**
-```json
-"crons": [
-  {
-    "path": "/api/admin/cron/trigger/schedule",
-    "schedule": "0 */6 * * *"
-  },
-  {
-    "path": "/api/admin/cron/trigger/news", 
-    "schedule": "0 */6 * * *"
-  }
-]
-```
+### **✅ Manual Cron Jobs:**
+Automatic cron jobs removed due to Vercel hobby plan limitations. 
+Use manual triggers from admin panel instead:
+
+**Manual Trigger Endpoints:**
+- `POST /api/admin/cron/trigger/schedule` - Fetch NFL schedule
+- `POST /api/admin/cron/trigger/news` - Fetch NFL news
 
 ### **✅ CORS Headers:**
 Automatically set on all endpoints for cross-origin requests.
@@ -151,7 +145,7 @@ curl -X POST https://your-vercel-app.vercel.app/api/admin/login \
 
 ✅ **Serverless scaling** - Automatic scaling based on demand  
 ✅ **Built-in CORS** - No more CORS configuration needed  
-✅ **Vercel Cron** - Reliable scheduled jobs  
+✅ **Manual Job Triggers** - Run jobs on-demand from admin panel  
 ✅ **Fast cold starts** - Optimized for quick response times  
 ✅ **Easy debugging** - Clear function-level logs  
 

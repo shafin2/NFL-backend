@@ -5,16 +5,6 @@
       "maxDuration": 30
     }
   },
-  "crons": [
-    {
-      "path": "/api/admin/cron/trigger/schedule",
-      "schedule": "0 */6 * * *"
-    },
-    {
-      "path": "/api/admin/cron/trigger/news", 
-      "schedule": "0 */6 * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/api/(.*)",
