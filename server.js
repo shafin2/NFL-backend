@@ -30,8 +30,13 @@ const PORT = process.env.PORT || 3000;
 // Connect to MongoDB
 connectDB();
 
-// Initialize cron jobs
-scheduleJobs();
+// Initialize cron jobs (only if not on Vercel)
+if (!process.env.VERCEL) {
+  scheduleJobs();
+  console.log('🕐 Traditional cron jobs initialized');
+} else {
+  console.log('☁️ Running on Vercel - using Vercel Cron instead of node-cron');
+}
 
 // Rate limiting
 const limiter = rateLimit({
