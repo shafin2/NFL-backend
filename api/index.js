@@ -71,16 +71,32 @@ module.exports = async function handler(req, res) {
         version: '1.0.0',
         serverless: true,
         endpoints: {
+          mobileApp: [
+            '/api/schedule (upcoming matches)',
+            '/api/replays (replay matches)',
+            '/api/live (live matches)',
+            '/api/matches/:id (match details)',
+            '/api/news (news list)',
+            '/api/news/:id (news details)',
+            '/api/app-settings (app configuration)',
+            '/api/device-token (register push token)'
+          ],
           public: [
             '/api (health check)',
             '/api/news',
+            '/api/news/:id',
             '/api/news/premium',
             '/api/news/search',
             '/api/news/stats',
             '/api/matches',
+            '/api/matches/:id',
             '/api/matches/live',
             '/api/matches/upcoming',
+            '/api/schedule',
+            '/api/replays',
+            '/api/live',
             '/api/app-settings',
+            '/api/device-token',
             '/api/notifications',
             '/api/notifications/register'
           ],
@@ -104,10 +120,45 @@ module.exports = async function handler(req, res) {
       });
     }
     
+    // Parse path parameters from URL (e.g., /news/123 -> resourceId=123)
+    const urlParts = url.split('/').filter(part => part);
+    const resourceId = urlParts.length > 1 ? urlParts[1] : id;
+    
+    // MOBILE APP ROUTES - Schedule (alias for upcoming matches)
+    if (url.startsWith('/schedule')) {
+      console.log('✅ Schedule route matched (mobile app)');
+      return await getUpcomingMatches(req, res);
+    }
+    
+    // MOBILE APP ROUTES - Replays (matches with replay status)
+    if (url.startsWith('/replays')) {
+      console.log('✅ Replays route matched (mobile app)');
+      // Filter matches with replay status
+      req.query = { ...req.query, status: 'replay' };
+      return await getMatches(req, res);
+    }
+    
+    // MOBILE APP ROUTES - Live (alias for live matches)
+    if (url === '/live' || url.startsWith('/live?')) {
+      console.log('✅ Live route matched (mobile app)');
+      return await getLiveMatches(req, res);
+    }
+    
+    // MOBILE APP ROUTES - Device Token Registration
+    if (url === '/device-token' && method === 'POST') {
+      console.log('✅ Device token route matched (mobile app)');
+      return await registerDeviceToken(req, res);
+    }
+
     // NEWS ROUTES
     if (url.startsWith('/news')) {
       console.log('✅ News route matched');
-      if (url.includes('/premium')) {
+      // Handle /news/:id pattern
+      if (method === 'GET' && resourceId && !url.includes('/premium') && !url.includes('/search') && !url.includes('/stats') && !url.includes('/type/')) {
+        req.params = { id: resourceId };
+        return await getNewsById(req, res);
+      }
+      else if (url.includes('/premium')) {
         return await getPremiumNews(req, res);
       } else if (url.includes('/search')) {
         return await searchNews(req, res);
@@ -125,7 +176,12 @@ module.exports = async function handler(req, res) {
     // MATCH ROUTES
     if (url.startsWith('/matches')) {
       console.log('✅ Match route matched');
-      if (url.includes('/live')) {
+      // Handle /matches/:id pattern
+      if (method === 'GET' && resourceId && !url.includes('/live') && !url.includes('/upcoming') && !url.includes('/week/')) {
+        req.params = { id: resourceId };
+        return await getMatchById(req, res);
+      }
+      else if (url.includes('/live')) {
         return await getLiveMatches(req, res);
       } else if (url.includes('/upcoming')) {
         return await getUpcomingMatches(req, res);
@@ -170,9 +226,13 @@ module.exports = async function handler(req, res) {
         method: method,
         availableRoutes: [
           '/ (health check)',
-          '/news',
-          '/matches', 
+          '/schedule (mobile: upcoming matches)',
+          '/replays (mobile: replay matches)', 
+          '/live (mobile: live matches)',
+          '/news (& /news/:id)',
+          '/matches (& /matches/:id)',
           '/app-settings',
+          '/device-token (mobile: push tokens)',
           '/notifications'
         ]
       }

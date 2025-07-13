@@ -1,6 +1,7 @@
 // Consolidated Admin API handler for Vercel serverless function
 const connectDB = require('../../config/database');
 const { adminAuth, adminLogin } = require('../../middleware/auth');
+const jwt = require('jsonwebtoken');
 
 const {
   getAllNews,
@@ -129,15 +130,64 @@ module.exports = async function handler(req, res) {
       return await adminLogin(req, res);
     }
     
-    // All other routes require authentication
-    const authResult = await new Promise((resolve) => {
-      adminAuth(req, res, () => {
-        resolve(true);
-      });
-    }).catch(() => false);
+    // All other routes require authentication - Direct implementation for Vercel
+    const JWT_SECRET = process.env.JWT_SECRET || 'nfl-admin-secret-key';
     
-    if (!authResult) {
-      return; // Auth middleware will handle the response
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.startsWith('Bearer ') 
+      ? authHeader.substring(7) 
+      : req.headers['x-admin-token']; // Fallback for old token header
+    
+    console.log('🔍 Auth Debug - Authorization Header:', authHeader);
+    console.log('🔍 Auth Debug - Extracted Token:', token ? 'Token present' : 'No token');
+    
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Access denied',
+        message: 'Authentication token required. Please login first.'
+      });
+    }
+
+    try {
+      // Verify JWT token
+      const decoded = jwt.verify(token, JWT_SECRET);
+      
+      // Check if token is for admin role
+      if (decoded.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          error: 'Insufficient permissions',
+          message: 'Admin access required'
+        });
+      }
+
+      // Add user info to request
+      req.user = decoded;
+      console.log('✅ Authentication successful for user:', decoded.username);
+      
+    } catch (error) {
+      console.error('🔍 Auth Error:', error.name, error.message);
+      
+      if (error.name === 'JsonWebTokenError') {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid token',
+          message: 'Invalid authentication token'
+        });
+      } else if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({
+          success: false,
+          error: 'Token expired',
+          message: 'Authentication token has expired. Please login again.'
+        });
+      }
+      
+      return res.status(500).json({
+        success: false,
+        error: 'Authentication error',
+        message: 'Error validating authentication token'
+      });
     }
     
     // Import dashboard route from existing admin routes
@@ -197,108 +247,397 @@ module.exports = async function handler(req, res) {
       });
     }
     
-    // CRON STATUS AND TRIGGERS
-    if (url === '/cron/status') {
-      return res.status(200).json({
-        success: true,
-        message: 'Manual job triggers available',
-        availableJobs: ['schedule', 'news'],
-        note: 'Automatic cron jobs disabled for Hobby plan'
-      });
-    }
+    // Parse path parameters from URL (e.g., /admin/matches/123 -> resourceId=123)
+    const urlParts = url.split('/').filter(part => part);
+    const resourceId = urlParts.length > 1 ? urlParts[1] : id;
     
-    if (url === '/cron/trigger/schedule' && method === 'POST') {
-      try {
-        await nflScheduleJob();
-        return res.status(200).json({
-          success: true,
-          message: 'NFL schedule job triggered successfully'
-        });
-      } catch (error) {
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to trigger schedule job',
-          message: error.message
-        });
-      }
-    }
-    
-    if (url === '/cron/trigger/news' && method === 'POST') {
-      try {
-        await nflNewsJob();
-        return res.status(200).json({
-          success: true,
-          message: 'NFL news job triggered successfully'
-        });
-      } catch (error) {
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to trigger news job',
-          message: error.message
-        });
-      }
-    }
-    
-    // NEWS ROUTES
-    if (url.startsWith('/news')) {
-      if (method === 'GET' && id) {
-        return await getNewsById(req, res);
-      } else if (method === 'GET') {
-        return await getAllNews(req, res);
-      } else if (method === 'POST') {
-        return await createNews(req, res);
-      } else if (method === 'PUT' && id) {
-        return await updateNews(req, res);
-      } else if (method === 'DELETE' && id) {
-        return await deleteNews(req, res);
-      }
-    }
-    
-    // MATCH ROUTES
+    // MATCHES ROUTES
     if (url.startsWith('/matches')) {
-      if (method === 'GET' && id) {
+      // GET /admin/matches/channels/dropdown
+      if (url === '/matches/channels/dropdown' && method === 'GET') {
+        return await getAllChannels(req, res);
+      }
+      // GET /admin/matches/:id
+      else if (method === 'GET' && resourceId) {
+        req.params = { id: resourceId };
         return await getMatchById(req, res);
-      } else if (method === 'GET') {
+      }
+      // GET /admin/matches
+      else if (method === 'GET') {
         return await getAllMatches(req, res);
-      } else if (method === 'POST') {
+      }
+      // POST /admin/matches
+      else if (method === 'POST') {
         return await createMatch(req, res);
-      } else if (method === 'PUT' && id) {
+      }
+      // PUT /admin/matches/:id
+      else if (method === 'PUT' && resourceId) {
+        req.params = { id: resourceId };
         return await updateMatch(req, res);
-      } else if (method === 'DELETE' && id) {
+      }
+      // DELETE /admin/matches/:id
+      else if (method === 'DELETE' && resourceId) {
+        req.params = { id: resourceId };
         return await deleteMatch(req, res);
       }
     }
     
-    // CHANNEL ROUTES
-    if (url.startsWith('/channels')) {
-      if (method === 'GET' && id) {
+    // NEWS ROUTES
+    else if (url.startsWith('/news')) {
+      // GET /admin/news/:id
+      if (method === 'GET' && resourceId) {
+        req.params = { id: resourceId };
+        return await getNewsById(req, res);
+      }
+      // GET /admin/news
+      else if (method === 'GET') {
+        return await getAllNews(req, res);
+      }
+      // POST /admin/news
+      else if (method === 'POST') {
+        return await createNews(req, res);
+      }
+      // PUT /admin/news/:id
+      else if (method === 'PUT' && resourceId) {
+        req.params = { id: resourceId };
+        return await updateNews(req, res);
+      }
+      // DELETE /admin/news/:id
+      else if (method === 'DELETE' && resourceId) {
+        req.params = { id: resourceId };
+        return await deleteNews(req, res);
+      }
+    }
+    
+    // CHANNELS ROUTES
+    else if (url.startsWith('/channels')) {
+      // GET /admin/channels/:id
+      if (method === 'GET' && resourceId) {
+        req.params = { id: resourceId };
         return await getChannelById(req, res);
-      } else if (method === 'GET') {
+      }
+      // GET /admin/channels
+      else if (method === 'GET') {
         return await getAllChannels(req, res);
-      } else if (method === 'POST') {
+      }
+      // POST /admin/channels
+      else if (method === 'POST') {
         return await createChannel(req, res);
-      } else if (method === 'PUT' && id) {
+      }
+      // PUT /admin/channels/:id
+      else if (method === 'PUT' && resourceId) {
+        req.params = { id: resourceId };
         return await updateChannel(req, res);
-      } else if (method === 'DELETE' && id) {
+      }
+      // DELETE /admin/channels/:id
+      else if (method === 'DELETE' && resourceId) {
+        req.params = { id: resourceId };
         return await deleteChannel(req, res);
       }
     }
     
-    // NOTIFICATION ROUTES
-    if (url.startsWith('/notifications')) {
-      if (url.includes('/send') && method === 'POST') {
+    // APP SETTINGS ROUTES
+    else if (url.startsWith('/app-settings')) {
+      // GET /admin/app-settings
+      if (method === 'GET') {
+        const { getAppSettings } = require('../../controllers/admin/adminAppSettingsController');
+        return await getAppSettings(req, res);
+      }
+      // PUT /admin/app-settings
+      else if (method === 'PUT') {
+        const { updateAppSettings } = require('../../controllers/admin/adminAppSettingsController');
+        return await updateAppSettings(req, res);
+      }
+    }
+    
+    // JOB HISTORY ROUTES
+    else if (url.startsWith('/jobs')) {
+      const JobHistory = require('../../models/JobHistory');
+      
+      // GET /admin/jobs/stats
+      if (url === '/jobs/stats' && method === 'GET') {
+        try {
+          const stats = await JobHistory.aggregate([
+            {
+              $group: {
+                _id: null,
+                totalJobs: { $sum: 1 },
+                completedJobs: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+                failedJobs: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+                runningJobs: { $sum: { $cond: [{ $eq: ['$status', 'running'] }, 1, 0] } }
+              }
+            }
+          ]);
+          
+          return res.status(200).json({
+            success: true,
+            data: stats[0] || { totalJobs: 0, completedJobs: 0, failedJobs: 0, runningJobs: 0 },
+            message: 'Job statistics retrieved successfully'
+          });
+        } catch (error) {
+          return res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            message: 'Unable to fetch job statistics'
+          });
+        }
+      }
+      // GET /admin/jobs/api-stats
+      else if (url === '/jobs/api-stats' && method === 'GET') {
+        return res.status(200).json({
+          success: true,
+          data: { message: 'API stats functionality coming soon' },
+          message: 'API statistics retrieved successfully'
+        });
+      }
+      // POST /admin/jobs/api-stats/reset
+      else if (url === '/jobs/api-stats/reset' && method === 'POST') {
+        return res.status(200).json({
+          success: true,
+          message: 'API statistics reset successfully'
+        });
+      }
+      // POST /admin/jobs/trigger
+      else if (url === '/jobs/trigger' && method === 'POST') {
+        const { jobName } = req.body;
+        try {
+          if (jobName === 'schedule') {
+            await nflScheduleJob();
+          } else if (jobName === 'news') {
+            await nflNewsJob();
+          } else {
+            return res.status(400).json({
+              success: false,
+              error: 'Invalid job name',
+              message: 'Job name must be either "schedule" or "news"'
+            });
+          }
+          
+          return res.status(200).json({
+            success: true,
+            message: `${jobName} job triggered successfully`
+          });
+        } catch (error) {
+          return res.status(500).json({
+            success: false,
+            error: 'Job trigger failed',
+            message: error.message
+          });
+        }
+      }
+      // DELETE /admin/jobs/cleanup
+      else if (url === '/jobs/cleanup' && method === 'DELETE') {
+        try {
+          const { olderThanDays = 30 } = req.body;
+          const cutoffDate = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+          
+          const result = await JobHistory.deleteMany({
+            started_at: { $lt: cutoffDate },
+            status: { $in: ['completed', 'failed'] }
+          });
+          
+          return res.status(200).json({
+            success: true,
+            data: { deletedCount: result.deletedCount },
+            message: `Cleaned up ${result.deletedCount} old job records`
+          });
+        } catch (error) {
+          return res.status(500).json({
+            success: false,
+            error: 'Cleanup failed',
+            message: error.message
+          });
+        }
+      }
+      // PUT /admin/jobs/:id/cancel (handle the /cancel suffix)
+      else if (url.includes('/cancel') && method === 'PUT') {
+        const jobId = url.split('/')[1]; // Extract ID from URL like /jobs/123/cancel
+        try {
+          const job = await JobHistory.findByIdAndUpdate(
+            jobId,
+            { 
+              status: 'cancelled',
+              completed_at: new Date(),
+              result: { success: false, message: 'Job cancelled by admin' }
+            },
+            { new: true }
+          );
+          
+          if (!job) {
+            return res.status(404).json({
+              success: false,
+              error: 'Not found',
+              message: 'Job not found'
+            });
+          }
+          
+          return res.status(200).json({
+            success: true,
+            data: job,
+            message: 'Job cancelled successfully'
+          });
+        } catch (error) {
+          return res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            message: 'Unable to cancel job'
+          });
+        }
+      }
+      // GET /admin/jobs/:id
+      else if (method === 'GET' && resourceId) {
+        try {
+          const job = await JobHistory.findById(resourceId);
+          if (!job) {
+            return res.status(404).json({
+              success: false,
+              error: 'Not found',
+              message: 'Job not found'
+            });
+          }
+          
+          return res.status(200).json({
+            success: true,
+            data: job,
+            message: 'Job details retrieved successfully'
+          });
+        } catch (error) {
+          return res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            message: 'Unable to fetch job details'
+          });
+        }
+      }
+      // GET /admin/jobs
+      else if (method === 'GET') {
+        try {
+          const { page = 1, limit = 20, status, jobName } = query;
+          const queryFilter = {};
+          
+          if (status) queryFilter.status = status;
+          if (jobName) queryFilter.job_name = jobName;
+          
+          const skip = (parseInt(page) - 1) * parseInt(limit);
+          
+          const [jobs, totalCount] = await Promise.all([
+            JobHistory.find(queryFilter)
+              .sort({ started_at: -1 })
+              .skip(skip)
+              .limit(parseInt(limit)),
+            JobHistory.countDocuments(queryFilter)
+          ]);
+          
+          return res.status(200).json({
+            success: true,
+            data: {
+              jobs,
+              pagination: {
+                current_page: parseInt(page),
+                total_pages: Math.ceil(totalCount / parseInt(limit)),
+                total_jobs: totalCount,
+                per_page: parseInt(limit)
+              }
+            },
+            message: 'Job history retrieved successfully'
+          });
+        } catch (error) {
+          return res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            message: 'Unable to fetch job history'
+          });
+        }
+      }
+    }
+    
+    // CRON ROUTES
+    else if (url.startsWith('/cron')) {
+      // GET /admin/cron/status
+      if (url === '/cron/status' && method === 'GET') {
+        return res.status(200).json({
+          success: true,
+          message: 'Manual job triggers available',
+          availableJobs: ['schedule', 'news'],
+          note: 'Automatic cron jobs disabled for Hobby plan'
+        });
+      }
+      // POST /admin/cron/trigger/:jobName
+      else if (url.startsWith('/cron/trigger/') && method === 'POST') {
+        const jobName = url.split('/cron/trigger/')[1];
+        try {
+          if (jobName === 'schedule') {
+            await nflScheduleJob();
+          } else if (jobName === 'news') {
+            await nflNewsJob();
+          } else {
+            return res.status(400).json({
+              success: false,
+              error: 'Invalid job name',
+              message: 'Job name must be either "schedule" or "news"'
+            });
+          }
+          
+          return res.status(200).json({
+            success: true,
+            message: `${jobName} job triggered successfully`
+          });
+        } catch (error) {
+          return res.status(500).json({
+            success: false,
+            error: 'Job trigger failed',
+            message: error.message
+          });
+        }
+      }
+    }
+    
+    // NOTIFICATIONS ROUTES
+    else if (url.startsWith('/notifications')) {
+      // POST /admin/notifications/send
+      if (url === '/notifications/send' && method === 'POST') {
         return await sendNotification(req, res);
-      } else if (url.includes('/history')) {
-        return await getNotificationHistory(req, res);
-      } else if (url.includes('/stats')) {
-        return await getNotificationStats(req, res);
       }
     }
     
     // 404 - Route not found
     res.status(404).json({
+      success: false,
       error: 'Not Found',
-      message: 'The requested admin endpoint was not found'
+      message: 'The requested admin endpoint was not found',
+      availableEndpoints: [
+        'POST /admin/login',
+        'GET /admin/dashboard',
+        'GET /admin/matches',
+        'POST /admin/matches',
+        'GET /admin/matches/:id',
+        'PUT /admin/matches/:id',
+        'DELETE /admin/matches/:id',
+        'GET /admin/matches/channels/dropdown',
+        'GET /admin/news',
+        'POST /admin/news',
+        'GET /admin/news/:id',
+        'PUT /admin/news/:id',
+        'DELETE /admin/news/:id',
+        'GET /admin/channels',
+        'POST /admin/channels',
+        'GET /admin/channels/:id',
+        'PUT /admin/channels/:id',
+        'DELETE /admin/channels/:id',
+        'GET /admin/app-settings',
+        'PUT /admin/app-settings',
+        'GET /admin/jobs',
+        'GET /admin/jobs/:id',
+        'PUT /admin/jobs/:id/cancel',
+        'GET /admin/jobs/stats',
+        'GET /admin/jobs/api-stats',
+        'POST /admin/jobs/api-stats/reset',
+        'POST /admin/jobs/trigger',
+        'DELETE /admin/jobs/cleanup',
+        'GET /admin/cron/status',
+        'POST /admin/cron/trigger/:jobName',
+        'POST /admin/notifications/send'
+      ]
     });
     
   } catch (error) {
