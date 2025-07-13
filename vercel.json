@@ -1,46 +1,17 @@
 {
   "version": 2,
-  "rewrites": [
-    {
-      "source": "/health",
-      "destination": "/server.js"
-    },
-    {
-      "source": "/admin/login",
-      "destination": "/server.js"
-    },
-    {
-      "source": "/admin/cron/(.*)",
-      "destination": "/server.js"
-    },
-    {
-      "source": "/admin/(.*)",
-      "destination": "/server.js"
-    },
-    {
-      "source": "/api/(.*)",
-      "destination": "/server.js"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/server.js"
-    }
-  ],
-  "env": {
-    "NODE_ENV": "production"
-  },
   "functions": {
-    "server.js": {
+    "api/**/*.js": {
       "maxDuration": 30
     }
   },
   "crons": [
     {
-      "path": "/admin/cron/trigger/schedule",
+      "path": "/api/admin/cron/trigger/schedule",
       "schedule": "0 */6 * * *"
     },
     {
-      "path": "/admin/cron/trigger/news", 
+      "path": "/api/admin/cron/trigger/news", 
       "schedule": "0 */6 * * *"
     }
   ],
@@ -63,7 +34,7 @@
       ]
     },
     {
-      "source": "/admin/(.*)",
+      "source": "/api/admin/(.*)",
       "headers": [
         {
           "key": "Access-Control-Allow-Origin",
