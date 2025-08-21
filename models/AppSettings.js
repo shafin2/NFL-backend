@@ -46,6 +46,24 @@ const appSettingsSchema = new mongoose.Schema({
       default: 180, // seconds
       min: 60,
       max: 600
+    },
+    /**
+     * Per-screen ad settings, e.g.
+     * per_screen: {
+     *   HomeScreen: { banner: true, interstitial: false },
+     *   NewsScreen: { banner: true, interstitial: true },
+     *   ...
+     * }
+     */
+    per_screen: {
+      type: Object,
+      default: {
+        HomeScreen: { banner: true, interstitial: true },
+        LiveScreen: { banner: false, interstitial: true },
+        NewsScreen: { banner: true, interstitial: true },
+        ReplaysScreen: { banner: true, interstitial: true },
+        ScheduleScreen: { banner: true, interstitial: true }
+      }
     }
   },
   maintenance: {

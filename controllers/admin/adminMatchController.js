@@ -255,6 +255,104 @@ const deleteMatch = async (req, res) => {
   }
 };
 
+// Add/update live streaming links for a match
+const updateLiveLinks = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { links } = req.body;
+    if (!Array.isArray(links) || links.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing links',
+        message: 'At least one live link is required'
+      });
+    }
+    // Validate each link
+    for (const link of links) {
+      if (!link.name || !link.url) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid link',
+          message: 'Each link must have a name and url'
+        });
+      }
+    }
+    // Update match
+    const match = await Match.findByIdAndUpdate(
+      id,
+      { status: 'live', m3u8_links: links },
+      { new: true, runValidators: true }
+    );
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Match not found'
+      });
+    }
+    res.status(200).json({
+      success: true,
+      data: match,
+      message: 'Live streaming links updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating live links:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: 'Unable to update live links'
+    });
+  }
+};
+
+// Add/update replay streaming link for a match
+const updateReplayUrl = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { url, name, userAgent, origin, referer } = req.body;
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing url',
+        message: 'Replay url is required'
+      });
+    }
+    // Default name to 'Replay' if not provided
+    const replayLink = {
+      name: name || 'Replay',
+      url,
+      userAgent,
+      origin,
+      referer
+    };
+    // Update match
+    const match = await Match.findByIdAndUpdate(
+      id,
+      { status: 'replay', m3u8_links: [replayLink] },
+      { new: true, runValidators: true }
+    );
+    if (!match) {
+      return res.status(404).json({
+        success: false,
+        error: 'Not found',
+        message: 'Match not found'
+      });
+    }
+    res.status(200).json({
+      success: true,
+      data: match,
+      message: 'Replay URL added successfully'
+    });
+  } catch (error) {
+    console.error('Error updating replay url:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      message: 'Unable to update replay url'
+    });
+  }
+};
+
 // Get all channels for dropdowns
 const getChannelsForDropdown = async (req, res) => {
   try {
@@ -282,5 +380,7 @@ module.exports = {
   createMatch,
   updateMatch,
   deleteMatch,
-  getChannelsForDropdown
+  getChannelsForDropdown,
+  updateLiveLinks,
+  updateReplayUrl
 }; 

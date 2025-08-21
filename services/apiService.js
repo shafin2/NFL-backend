@@ -164,7 +164,8 @@ class ApiService {
       success = true;
       const responseTime = Date.now() - startTime;
       
-      await this.recordApiCall(service, endpoint, responseTime, success);
+      // Stats are already tracked by interceptors
+      console.log(`✅ ${service} API call successful (${responseTime}ms)`);
       
       return response.data;
       
@@ -172,7 +173,8 @@ class ApiService {
       const responseTime = Date.now() - startTime;
       errorMessage = error.response?.data?.message || error.message;
       
-      await this.recordApiCall(service, endpoint, responseTime, success, errorMessage);
+      // Stats are already tracked by interceptors
+      console.error(`❌ ${service} API call failed (${responseTime}ms): ${errorMessage}`);
       
       throw error;
     }
@@ -195,9 +197,8 @@ class ApiService {
   async getNFLSchedule(season = '2024') {
     const config = {
       method: 'GET',
-      url: `https://api.sportsblaze.com/v1/nfl/schedule?season=${season}`,
+      url: `https://api.sportsblaze.com/nfl/v1/schedule/season/${season}.json?key=${process.env.SPORTSBLAZE_API_KEY}`,
       headers: {
-        'Authorization': `Bearer ${process.env.SPORTSBLAZE_API_KEY}`,
         'Content-Type': 'application/json'
       }
     };

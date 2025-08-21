@@ -18,7 +18,10 @@ const getAppSettings = async (req, res) => {
       },
       ads :{
         enable_banner: settings.ads.enable_banner,
-        enable_interstitial: settings.ads.enable_interstitial
+        enable_interstitial: settings.ads.enable_interstitial,
+        banner_frequency: settings.ads.banner_frequency,
+        interstitial_frequency: settings.ads.interstitial_frequency,
+        per_screen: settings.ads.per_screen
       },
       features: settings.features,
       api_config: {

@@ -1,5 +1,15 @@
 const AppSettings = require('../../models/AppSettings');
 
+// Allowed screens and ad types for per-screen ad settings
+const ALLOWED_SCREENS = [
+  'HomeScreen',
+  'LiveScreen',
+  'NewsScreen',
+  'ReplaysScreen',
+  'ScheduleScreen'
+];
+const ALLOWED_AD_TYPES = ['banner', 'interstitial'];
+
 // Get current app settings (admin view)
 const getAppSettings = async (req, res) => {
   try {
@@ -31,6 +41,36 @@ const updateAppSettings = async (req, res) => {
     delete updateData.createdAt;
     delete updateData.updatedAt;
 
+    // Validate per_screen ad settings if present
+    if (updateData.ads && updateData.ads.per_screen) {
+      const perScreen = updateData.ads.per_screen;
+      for (const screen of Object.keys(perScreen)) {
+        if (!ALLOWED_SCREENS.includes(screen)) {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid screen',
+            message: `Screen '${screen}' is not allowed.`
+          });
+        }
+        for (const adType of Object.keys(perScreen[screen])) {
+          if (!ALLOWED_AD_TYPES.includes(adType)) {
+            return res.status(400).json({
+              success: false,
+              error: 'Invalid ad type',
+              message: `Ad type '${adType}' is not allowed for screen '${screen}'.`
+            });
+          }
+          if (typeof perScreen[screen][adType] !== 'boolean') {
+            return res.status(400).json({
+              success: false,
+              error: 'Invalid value',
+              message: `Ad type '${adType}' for screen '${screen}' must be a boolean.`
+            });
+          }
+        }
+      }
+    }
+
     // Get current settings
     let settings = await AppSettings.findOne();
     
@@ -46,7 +86,7 @@ const updateAppSettings = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: settings,
+      data: settings, // includes ads.per_screen
       message: 'App settings updated successfully'
     });
 
@@ -244,7 +284,14 @@ const resetToDefaults = async (req, res) => {
         enable_banner: true,
         enable_interstitial: true,
         banner_frequency: 30,
-        interstitial_frequency: 180
+        interstitial_frequency: 180,
+        per_screen: {
+          HomeScreen: { banner: true, interstitial: true },
+          LiveScreen: { banner: false, interstitial: true },
+          NewsScreen: { banner: true, interstitial: true },
+          ReplaysScreen: { banner: true, interstitial: true },
+          ScheduleScreen: { banner: true, interstitial: true }
+        }
       },
       maintenance: {
         is_enabled: false,

@@ -54,6 +54,21 @@ const matchSchema = new mongoose.Schema({
         },
         message: 'Invalid m3u8 URL format'
       }
+    },
+    userAgent: {
+      type: String,
+      required: false,
+      trim: true
+    },
+    origin: {
+      type: String,
+      required: false,
+      trim: true
+    },
+    referer: {
+      type: String,
+      required: false,
+      trim: true
     }
   }],
   score: {
