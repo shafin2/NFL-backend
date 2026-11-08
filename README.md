@@ -266,4 +266,11 @@ See `CRON_JOBS_GUIDE.md` for complete setup instructions.
 
 ## 📄 License
 
-MIT License - see LICENSE file for details 
+MIT License - see LICENSE file for details
+
+
+---
+
+## Author
+
+Built by **[Shafin Zaman](https://www.shafinzaman.dev)** (Shafin Uz Zaman), Senior AI Engineer. Case study: [NFL Streaming App](https://www.shafinzaman.dev/work/nfl-streaming). More of my work: [shafinzaman.dev/work](https://www.shafinzaman.dev/work).
